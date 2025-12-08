@@ -1,0 +1,10 @@
+# mat73
+numpy
+pandas 
+# scikit-learn
+matplotlib
+seaborn
+scipy
+# tensorflow>=2.10.0
+# jupyter
+# ipykernel
