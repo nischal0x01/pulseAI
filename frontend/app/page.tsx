@@ -41,7 +41,7 @@ function MonitorDashboard() {
             </div>
           </div>
           <div className="h-64 p-4">
-            <SignalChart buffer={ppgBuffer} color="hsl(0, 84%, 60%)" label="PPG" yMin={0} yMax={1024} />
+            <SignalChart buffer={ppgBuffer} color="hsl(0, 84%, 60%)" label="PPG" yMin={-2} yMax={2} />
           </div>
         </div>
 
@@ -57,7 +57,7 @@ function MonitorDashboard() {
             </div>
           </div>
           <div className="h-64 p-4">
-            <SignalChart buffer={ecgBuffer} color="hsl(217, 91%, 60%)" label="ECG" yMin={-512} yMax={512} />
+            <SignalChart buffer={ecgBuffer} color="hsl(217, 91%, 60%)" label="ECG" yMin={-3} yMax={3} />
           </div>
         </div>
 

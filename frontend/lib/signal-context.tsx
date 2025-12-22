@@ -7,6 +7,7 @@ import { SignalBuffer } from "./signal-buffer"
 
 interface SignalContextType {
   connectionStatus: ConnectionStatus
+  connectionError: string | null
   ppgBuffer: SignalBuffer
   ecgBuffer: SignalBuffer
   isAcquiring: boolean
@@ -19,6 +20,7 @@ interface SignalContextType {
   stopAcquisition: () => void
   calibrate: () => void
   setEsp32Ip: (ip: string) => void
+  clearError: () => void
 }
 
 const SignalContext = createContext<SignalContextType | undefined>(undefined)
@@ -32,8 +34,9 @@ export function useSignal() {
 }
 
 export function SignalProvider({ children }: { children: React.ReactNode }) {
-  const [esp32Ip, setEsp32Ip] = useState("192.168.1.100:8080")
+  const [esp32Ip, setEsp32Ip] = useState("localhost:8080")
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("disconnected")
+  const [connectionError, setConnectionError] = useState<string | null>(null)
   const [isAcquiring, setIsAcquiring] = useState(false)
   const [currentHeartRate, setCurrentHeartRate] = useState(0)
   const [signalQuality, setSignalQuality] = useState(0)
@@ -82,6 +85,16 @@ export function SignalProvider({ children }: { children: React.ReactNode }) {
 
     const unsubStatus = wsManager.onStatusChange((status: ConnectionStatus) => {
       setConnectionStatus(status)
+      
+      // Set error messages based on status
+      if (status === "error") {
+        setConnectionError(`Failed to connect to ESP32/Server at ${esp32Ip}. 
+        
+For development: Run the mock server with 'python mock_esp32_server.py'
+For production: Check the ESP32 device connection and IP address.`)
+      } else if (status === "connected") {
+        setConnectionError(null) // Clear error on successful connection
+      }
     })
 
     return () => {
@@ -124,10 +137,15 @@ export function SignalProvider({ children }: { children: React.ReactNode }) {
     wsManager?.sendCommand({ type: "control", command: "calibrate" })
   }, [wsManager])
 
+  const clearError = useCallback(() => {
+    setConnectionError(null)
+  }, [])
+
   return (
     <SignalContext.Provider
       value={{
         connectionStatus,
+        connectionError,
         ppgBuffer,
         ecgBuffer,
         isAcquiring,
@@ -140,6 +158,7 @@ export function SignalProvider({ children }: { children: React.ReactNode }) {
         stopAcquisition,
         calibrate,
         setEsp32Ip,
+        clearError,
       }}
     >
       {children}

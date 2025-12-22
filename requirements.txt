@@ -8,3 +8,8 @@ scipy
 # tensorflow>=2.10.0
 # jupyter
 # ipykernel
+
+# WebSocket server dependencies for development/testing
+fastapi
+uvicorn[standard]
+websockets
