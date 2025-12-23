@@ -73,7 +73,7 @@ export class SignalBuffer {
 
     // --- Estimated BP placeholder logic ---
     // NOTE: This is a stub using simple scaling of the signal.
-    // Replace with your trained model or a proper estimation function.
+    // Replace with  trained model or a proper estimation function.
     const max = Math.max(...values)
     const min = Math.min(...values)
     const amplitude = max - min

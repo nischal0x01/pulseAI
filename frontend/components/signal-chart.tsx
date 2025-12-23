@@ -15,13 +15,22 @@ export function SignalChart({ buffer, color, label, yMin, yMax }: SignalChartPro
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const animationRef = useRef<number>()
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 })
+  const dimensionsRef = useRef(dimensions)
+
+  // Keep ref in sync with state
+  useEffect(() => {
+    dimensionsRef.current = dimensions
+  }, [dimensions])
 
   // Handle canvas resize
   useEffect(() => {
     const updateDimensions = () => {
       if (canvasRef.current?.parentElement) {
         const { width, height } = canvasRef.current.parentElement.getBoundingClientRect()
-        setDimensions({ width, height })
+        setDimensions({
+          width: Math.max(1, width),
+          height: Math.max(1, height),
+        })
       }
     }
 
@@ -39,18 +48,24 @@ export function SignalChart({ buffer, color, label, yMin, yMax }: SignalChartPro
     if (!ctx) return
 
     const render = () => {
-      const data = buffer.getWindowedData(10000) // 10 second window
+      const { width, height } = dimensionsRef.current
+      const data = buffer.getWindowedData(10000) // 10 second logical window based on buffer timestamps
+
+      // If we don't have a valid canvas size yet, skip drawing this frame
+      if (width <= 0 || height <= 0) {
+        animationRef.current = requestAnimationFrame(render)
+        return
+      }
 
       // Clear canvas
       ctx.fillStyle = "hsl(var(--background))"
-      ctx.fillRect(0, 0, dimensions.width, dimensions.height)
+      ctx.fillRect(0, 0, width, height)
 
       if (data.length === 0) {
-        // Show "No Data" message
         ctx.fillStyle = color
         ctx.font = "16px Arial"
         ctx.textAlign = "center"
-        ctx.fillText("No Signal Data", dimensions.width / 2, dimensions.height / 2)
+        ctx.fillText("No Signal Data", width / 2, height / 2)
         animationRef.current = requestAnimationFrame(render)
         return
       }
@@ -60,21 +75,19 @@ export function SignalChart({ buffer, color, label, yMin, yMax }: SignalChartPro
       ctx.lineWidth = 1
       ctx.setLineDash([2, 4])
 
-      // Horizontal grid lines
       for (let i = 0; i <= 4; i++) {
-        const y = (dimensions.height / 4) * i
+        const y = (height / 4) * i
         ctx.beginPath()
         ctx.moveTo(0, y)
-        ctx.lineTo(dimensions.width, y)
+        ctx.lineTo(width, y)
         ctx.stroke()
       }
 
-      // Vertical grid lines (every second)
       for (let i = 0; i <= 10; i++) {
-        const x = (dimensions.width / 10) * i
+        const x = (width / 10) * i
         ctx.beginPath()
         ctx.moveTo(x, 0)
-        ctx.lineTo(x, dimensions.height)
+        ctx.lineTo(x, height)
         ctx.stroke()
       }
 
@@ -85,74 +98,51 @@ export function SignalChart({ buffer, color, label, yMin, yMax }: SignalChartPro
       ctx.lineWidth = 2
       ctx.beginPath()
 
-      if (data.length > 1) {
-        // Safety check for canvas dimensions
-        if (dimensions.width === 0 || dimensions.height === 0) {
-          animationRef.current = requestAnimationFrame(render)
-          return
-        }
+      // Derive window from actual data timestamps
+      const firstTs = data[0].timestamp
+      const lastTs = data[data.length - 1].timestamp
+      const timeRange = Math.max(1, lastTs - firstTs)
 
-        // Use a rolling 10-second window for consistent X-axis scaling
-        const now = Date.now()
-        const windowStart = now - 10000 // 10 seconds ago
-        const windowEnd = now
-        const timeRange = 10000 // Fixed 10 second window
-        const valueRange = yMax - yMin
+      // Auto-scale Y based on data, but respect provided yMin/yMax as soft bounds
+      const values = data.map((p) => p.value)
+      const dataMin = Math.min(...values)
+      const dataMax = Math.max(...values)
+      const effectiveMin = Math.min(yMin, dataMin)
+      const effectiveMax = Math.max(yMax, dataMax)
+      const valueRange = Math.max(1e-6, effectiveMax - effectiveMin)
 
-        // Filter data to only include points within our time window
-        const filteredData = data.filter(point => 
-          point.timestamp >= windowStart && point.timestamp <= windowEnd
+      if (Math.random() < 0.02) {
+        console.log(
+          `[${label}] size=${width}x${height}, points=${data.length}, t=[${firstTs}, ${lastTs}], v=[${dataMin}, ${dataMax}]`,
         )
-
-        // Debug logging - show every 60th frame (roughly once per second)
-        if (Math.random() < 0.016) { 
-          console.log(`[${label}] Total points: ${data.length}, Filtered points: ${filteredData.length}`)
-          console.log(`[${label}] Value range in data: ${Math.min(...data.map(d => d.value)).toFixed(3)} to ${Math.max(...data.map(d => d.value)).toFixed(3)}`)
-          console.log(`[${label}] Expected Y range: ${yMin} to ${yMax}`)
-          console.log(`[${label}] Canvas dimensions: ${dimensions.width}x${dimensions.height}`)
-          console.log(`[${label}] Time window: ${windowStart} to ${windowEnd} (${timeRange}ms)`)
-          
-          // Show first few coordinates with new calculation
-          if (filteredData.length > 0) {
-            const samplePoint = filteredData[0]
-            const sampleX = ((samplePoint.timestamp - windowStart) / timeRange) * dimensions.width
-            const sampleY = dimensions.height - ((samplePoint.value - yMin) / valueRange) * dimensions.height
-            console.log(`[${label}] Sample coordinate: (${sampleX.toFixed(1)}, ${sampleY.toFixed(1)}) [timestamp: ${samplePoint.timestamp}]`)
-          }
-        }
-
-        filteredData.forEach((point, index) => {
-          const x = ((point.timestamp - windowStart) / timeRange) * dimensions.width
-          const y = dimensions.height - ((point.value - yMin) / valueRange) * dimensions.height
-
-          if (index === 0) {
-            ctx.moveTo(x, y)
-          } else {
-            ctx.lineTo(x, y)
-          }
-        })
-
-        ctx.stroke()
-
-        // Reset stroke style
-        ctx.strokeStyle = color
-
-        // Draw peaks
-        const peaks = buffer.getPeaks()
-        ctx.fillStyle = color
-
-        peaks.forEach((peakTime) => {
-          const peakData = filteredData.find((d) => d.timestamp === peakTime)
-          if (peakData) {
-            const x = ((peakData.timestamp - windowStart) / timeRange) * dimensions.width
-            const y = dimensions.height - ((peakData.value - yMin) / valueRange) * dimensions.height
-
-            ctx.beginPath()
-            ctx.arc(x, y, 4, 0, 2 * Math.PI)
-            ctx.fill()
-          }
-        })
       }
+
+      data.forEach((point, index) => {
+        const x = ((point.timestamp - firstTs) / timeRange) * width
+        const y = height - ((point.value - effectiveMin) / valueRange) * height
+
+        if (index === 0) {
+          ctx.moveTo(x, y)
+        } else {
+          ctx.lineTo(x, y)
+        }
+      })
+
+      ctx.stroke()
+
+      // Draw peaks (if timestamps are comparable)
+      const peaks = buffer.getPeaks()
+      ctx.fillStyle = color
+      peaks.forEach((peakTime) => {
+        const peakData = data.find((d) => d.timestamp === peakTime)
+        if (peakData) {
+          const x = ((peakData.timestamp - firstTs) / timeRange) * width
+          const y = height - ((peakData.value - effectiveMin) / valueRange) * height
+          ctx.beginPath()
+          ctx.arc(x, y, 4, 0, 2 * Math.PI)
+          ctx.fill()
+        }
+      })
 
       animationRef.current = requestAnimationFrame(render)
     }
@@ -164,7 +154,7 @@ export function SignalChart({ buffer, color, label, yMin, yMax }: SignalChartPro
         cancelAnimationFrame(animationRef.current)
       }
     }
-  }, [buffer, dimensions, color, yMin, yMax])
+  }, [buffer, color, yMin, yMax])
 
   return (
     <div className="relative h-full w-full">
