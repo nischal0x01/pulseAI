@@ -8,7 +8,8 @@ export interface SignalMetrics {
   heartRate: number
   signalQuality: number
   lastRRInterval: number
-  amplitude: number
+  estimatedSBP: number
+  estimatedDBP: number
 }
 
 export class SignalBuffer {
@@ -55,7 +56,8 @@ export class SignalBuffer {
         heartRate: 0,
         signalQuality: 0,
         lastRRInterval: 0,
-        amplitude: 0,
+        estimatedSBP: 0,
+        estimatedDBP: 0,
       }
     }
 
@@ -69,10 +71,16 @@ export class SignalBuffer {
     const variance = values.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / values.length
     const signalQuality = Math.min(100, (variance / 100) * 100)
 
-    // Calculate amplitude
+    // --- Estimated BP placeholder logic ---
+    // NOTE: This is a stub using simple scaling of the signal.
+    // Replace with your trained model or a proper estimation function.
     const max = Math.max(...values)
     const min = Math.min(...values)
     const amplitude = max - min
+
+    // Very rough heuristic mapping amplitude -> BP (for demo only)
+    const estimatedSBP = 100 + amplitude * 5
+    const estimatedDBP = 60 + amplitude * 3
 
     // Last R-R interval
     const lastRRInterval =
@@ -82,7 +90,8 @@ export class SignalBuffer {
       heartRate,
       signalQuality,
       lastRRInterval,
-      amplitude,
+      estimatedSBP,
+      estimatedDBP,
     }
   }
 

@@ -8,11 +8,12 @@ import { Activity, Signal } from "lucide-react"
 
 export function SignalMetrics() {
   const { ppgBuffer, ecgBuffer, currentHeartRate, signalQuality } = useSignal()
-  const [ppgMetrics, setPpgMetrics] = useState({ amplitude: 0, lastRRInterval: 0 })
-  const [ecgMetrics, setEcgMetrics] = useState({ amplitude: 0, lastRRInterval: 0 })
+  const [ppgMetrics, setPpgMetrics] = useState({ estimatedSBP: 0, estimatedDBP: 0, lastRRInterval: 0 })
+  const [ecgMetrics, setEcgMetrics] = useState({ estimatedSBP: 0, estimatedDBP: 0, lastRRInterval: 0 })
 
   useEffect(() => {
     const interval = setInterval(() => {
+      // Both buffers return SignalMetrics with estimatedSBP/estimatedDBP now
       setPpgMetrics(ppgBuffer.calculateMetrics())
       setEcgMetrics(ecgBuffer.calculateMetrics())
     }, 1000)
@@ -52,19 +53,30 @@ export function SignalMetrics() {
         progressColor={getQualityBg(signalQuality)}
       />
 
+      {/* Estimated BP from PPG */}
       <MetricCard
-        label="PPG Amplitude"
-        value={ppgMetrics.amplitude > 0 ? Math.round(ppgMetrics.amplitude).toString() : "--"}
-        unit="units"
+        label="Estimated SBP (PPG)"
+        value={ppgMetrics.estimatedSBP > 0 ? Math.round(ppgMetrics.estimatedSBP).toString() : "--"}
+        unit="mmHg"
         color="text-red-400"
       />
 
       <MetricCard
+        label="Estimated DBP (PPG)"
+        value={ppgMetrics.estimatedDBP > 0 ? Math.round(ppgMetrics.estimatedDBP).toString() : "--"}
+        unit="mmHg"
+        color="text-red-400"
+      />
+
+      {/* Optional: show RR interval from ECG if desired */}
+      {/*
+      <MetricCard
         label="R-R Interval"
-        value={ppgMetrics.lastRRInterval > 0 ? Math.round(ppgMetrics.lastRRInterval).toString() : "--"}
+        value={ecgMetrics.lastRRInterval > 0 ? Math.round(ecgMetrics.lastRRInterval).toString() : "--"}
         unit="ms"
         color="text-blue-400"
       />
+      */}
     </div>
   )
 }
