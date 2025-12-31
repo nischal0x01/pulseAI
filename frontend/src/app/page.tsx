@@ -14,73 +14,84 @@ function MonitorDashboard() {
   const { ppgBuffer, ecgBuffer } = useSignal()
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-gradient-to-b from-background via-background to-muted/20">
       {/* Home Section */}
-      <section id="home" className="pt-24 pb-12 px-4 sm:px-6 lg:px-8">
-        <div className="mx-auto max-w-7xl space-y-8">
-          {/* Header */}
-          <div className="text-center space-y-4 mb-8">
-            <h1 className="text-4xl md:text-5xl font-bold tracking-tight">
-              <span className="bg-gradient-to-r from-blue-600 via-purple-600 to-blue-600 bg-clip-text text-transparent">
+      <section id="home" className="pt-32 pb-16 px-4 sm:px-6 lg:px-8">
+        <div className="mx-auto max-w-7xl space-y-10">
+          {/* Header with animations */}
+          <div className="text-center space-y-6 mb-12 animate-fade-in-up">
+            <h1 
+              className="text-6xl md:text-7xl lg:text-8xl font-extrabold tracking-tight leading-tight"
+              style={{ fontFamily: "var(--font-poppins)" }}
+            >
+              <span className="inline-block bg-gradient-to-r from-blue-600 via-purple-600 to-pink-600 bg-[length:200%_auto] bg-clip-text text-transparent" style={{ animation: "gradient-x 3s ease infinite" }}>
                 Pulse
               </span>
-              <span className="bg-gradient-to-r from-pink-600 via-red-500 to-orange-500 bg-clip-text text-transparent">
+              <span className="inline-block ml-2 bg-gradient-to-r from-pink-600 via-red-500 to-orange-500 bg-clip-text text-transparent">
                 AI
               </span>
             </h1>
-            <p className="text-xl text-muted-foreground max-w-3xl mx-auto">
+            <p 
+              className="text-2xl md:text-3xl text-muted-foreground max-w-4xl mx-auto font-medium leading-relaxed"
+              style={{ fontFamily: "var(--font-inter)" }}
+            >
               Real-time cuffless blood pressure monitoring using PPG and ECG signals
             </p>
-            <p className="text-base text-muted-foreground">
+            <p 
+              className="text-lg md:text-xl text-muted-foreground/80 max-w-3xl mx-auto"
+              style={{ fontFamily: "var(--font-inter)" }}
+            >
               Advanced machine learning for continuous, non-invasive blood pressure estimation
             </p>
           </div>
 
           {/* Connection Status */}
-          <div className="rounded-lg border bg-card p-4 shadow-sm">
+          <div className="rounded-2xl border border-border/50 bg-card/50 backdrop-blur-sm p-6 shadow-xl shadow-primary/5 hover:shadow-2xl hover:shadow-primary/10 transition-all duration-500 animate-fade-in-up">
             <ConnectionStatus />
           </div>
 
           {/* Metrics */}
-          <SignalMetrics />
+          <div className="animate-fade-in-up" style={{ animationDelay: "0.2s" }}>
+            <SignalMetrics />
+          </div>
 
           {/* Charts Grid */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
             {/* PPG Chart */}
-            <div className="rounded-lg border bg-card overflow-hidden shadow-sm">
-              <div className="border-b bg-muted/30 px-4 py-3">
+            <div className="rounded-2xl border border-border/50 bg-card/50 backdrop-blur-sm overflow-hidden shadow-xl shadow-primary/5 hover:shadow-2xl hover:shadow-primary/10 transition-all duration-500 animate-slide-in-left">
+              <div className="border-b border-border/50 bg-gradient-to-r from-muted/50 to-muted/30 px-6 py-4">
                 <div className="flex items-center justify-between">
                   <div>
-                    <h2 className="text-lg font-semibold">PPG Signal</h2>
-                    <p className="text-sm text-muted-foreground">Photoplethysmography • 250Hz sampling rate</p>
+                    <h2 className="text-xl font-bold" style={{ fontFamily: "var(--font-poppins)" }}>PPG Signal</h2>
+                    <p className="text-sm text-muted-foreground mt-1">Photoplethysmography • 250Hz sampling rate</p>
                   </div>
-                  <div className="h-2 w-2 rounded-full bg-red-500 animate-pulse" />
+                  <div className="h-3 w-3 rounded-full bg-red-500 animate-pulse shadow-lg shadow-red-500/50" />
                 </div>
               </div>
-              <div className="h-64 p-4">
+              <div className="h-72 p-6">
                 <SignalChart buffer={ppgBuffer} color="hsl(0, 84%, 60%)" label="PPG" yMin={-2} yMax={2} />
               </div>
             </div>
 
             {/* ECG Chart */}
-            <div className="rounded-lg border bg-card overflow-hidden shadow-sm">
-              <div className="border-b bg-muted/30 px-4 py-3">
+            <div className="rounded-2xl border border-border/50 bg-card/50 backdrop-blur-sm overflow-hidden shadow-xl shadow-primary/5 hover:shadow-2xl hover:shadow-primary/10 transition-all duration-500 animate-slide-in-right">
+              <div className="border-b border-border/50 bg-gradient-to-r from-muted/50 to-muted/30 px-6 py-4">
                 <div className="flex items-center justify-between">
                   <div>
-                    <h2 className="text-lg font-semibold">ECG Signal</h2>
-                    <p className="text-sm text-muted-foreground">Electrocardiogram • 500Hz sampling rate</p>
+                    <h2 className="text-xl font-bold" style={{ fontFamily: "var(--font-poppins)" }}>ECG Signal</h2>
+                    <p className="text-sm text-muted-foreground mt-1">Electrocardiogram • 500Hz sampling rate</p>
                   </div>
-                  <div className="h-2 w-2 rounded-full bg-blue-500 animate-pulse" />
+                  <div className="h-3 w-3 rounded-full bg-blue-500 animate-pulse shadow-lg shadow-blue-500/50" />
                 </div>
               </div>
-              <div className="h-64 p-4">
+              <div className="h-72 p-6">
                 <SignalChart buffer={ecgBuffer} color="hsl(217, 91%, 60%)" label="ECG" yMin={-3} yMax={3} />
               </div>
             </div>
           </div>
 
           {/* Controls */}
-          <div className="rounded-lg border bg-card p-4 shadow-sm">
+          <div className="rounded-2xl border border-border/50 bg-card/50 backdrop-blur-sm p-6 shadow-xl shadow-primary/5 hover:shadow-2xl hover:shadow-primary/10 transition-all duration-500 animate-fade-in-up" style={{ animationDelay: "0.4s" }}>
             <SignalControls />
           </div>
         </div>

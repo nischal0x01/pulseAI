@@ -4,85 +4,86 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  /* Light theme - Clean, professional health-tech palette */
+  /* Vibrant modern light theme */
   --background: oklch(0.99 0 0);
-  --foreground: oklch(0.15 0.02 270);
+  --foreground: oklch(0.20 0.02 260);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.15 0.02 270);
+  --card-foreground: oklch(0.20 0.02 260);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.15 0.02 270);
-  /* Primary: Professional blue with health-tech feel */
-  --primary: oklch(0.50 0.15 250);
+  --popover-foreground: oklch(0.20 0.02 260);
+  /* Vibrant primary - Rich purple-blue gradient */
+  --primary: oklch(0.55 0.20 280);
   --primary-foreground: oklch(0.98 0 0);
-  --secondary: oklch(0.96 0.01 270);
-  --secondary-foreground: oklch(0.20 0.02 270);
-  --muted: oklch(0.96 0.01 270);
-  --muted-foreground: oklch(0.50 0.01 270);
-  --accent: oklch(0.95 0.02 250);
-  --accent-foreground: oklch(0.20 0.02 270);
-  --destructive: oklch(0.55 0.22 25);
+  --secondary: oklch(0.96 0.02 280);
+  --secondary-foreground: oklch(0.25 0.02 260);
+  --muted: oklch(0.96 0.02 280);
+  --muted-foreground: oklch(0.55 0.02 260);
+  --accent: oklch(0.94 0.04 280);
+  --accent-foreground: oklch(0.25 0.02 260);
+  --destructive: oklch(0.60 0.25 25);
   --destructive-foreground: oklch(0.98 0 0);
-  --border: oklch(0.90 0.01 270);
-  --input: oklch(0.90 0.01 270);
-  --ring: oklch(0.50 0.15 250);
-  /* Chart colors - Health-focused palette */
-  --chart-1: oklch(0.55 0.22 25); /* Red for vital signs */
-  --chart-2: oklch(0.50 0.15 250); /* Blue for ECG/primary */
-  --chart-3: oklch(0.60 0.20 160); /* Green for healthy signals */
-  --chart-4: oklch(0.65 0.18 70); /* Amber for warnings */
-  --chart-5: oklch(0.55 0.18 320); /* Purple for secondary metrics */
-  --radius: 0.625rem;
+  --border: oklch(0.88 0.02 280);
+  --input: oklch(0.88 0.02 280);
+  --ring: oklch(0.55 0.20 280);
+  /* Vibrant chart colors */
+  --chart-1: oklch(0.65 0.25 15); /* Vibrant red */
+  --chart-2: oklch(0.55 0.20 280); /* Rich purple-blue */
+  --chart-3: oklch(0.65 0.22 160); /* Bright green */
+  --chart-4: oklch(0.70 0.20 50); /* Vibrant orange */
+  --chart-5: oklch(0.60 0.22 320); /* Purple-pink */
+  --radius: 0.75rem;
   --sidebar: oklch(0.98 0 0);
-  --sidebar-foreground: oklch(0.15 0.02 270);
-  --sidebar-primary: oklch(0.50 0.15 250);
+  --sidebar-foreground: oklch(0.20 0.02 260);
+  --sidebar-primary: oklch(0.55 0.20 280);
   --sidebar-primary-foreground: oklch(0.98 0 0);
-  --sidebar-accent: oklch(0.96 0.01 270);
-  --sidebar-accent-foreground: oklch(0.20 0.02 270);
-  --sidebar-border: oklch(0.90 0.01 270);
-  --sidebar-ring: oklch(0.50 0.15 250);
+  --sidebar-accent: oklch(0.96 0.02 280);
+  --sidebar-accent-foreground: oklch(0.25 0.02 260);
+  --sidebar-border: oklch(0.88 0.02 280);
+  --sidebar-ring: oklch(0.55 0.20 280);
 }
 
 .dark {
-  /* Medical-grade dark theme - Deep, professional health-tech palette */
-  --background: oklch(0.10 0.01 270);
+  /* Vibrant modern dark theme */
+  --background: oklch(0.08 0.01 260);
   --foreground: oklch(0.98 0 0);
-  --card: oklch(0.14 0.01 270);
+  --card: oklch(0.12 0.01 260);
   --card-foreground: oklch(0.98 0 0);
-  --popover: oklch(0.14 0.01 270);
+  --popover: oklch(0.12 0.01 260);
   --popover-foreground: oklch(0.98 0 0);
-  /* Primary: Bright, accessible blue for health-tech */
-  --primary: oklch(0.65 0.15 250);
-  --primary-foreground: oklch(0.10 0.01 270);
-  --secondary: oklch(0.22 0.01 270);
+  /* Vibrant primary for dark mode */
+  --primary: oklch(0.70 0.22 280);
+  --primary-foreground: oklch(0.08 0.01 260);
+  --secondary: oklch(0.20 0.02 260);
   --secondary-foreground: oklch(0.98 0 0);
-  --muted: oklch(0.18 0.01 270);
-  --muted-foreground: oklch(0.65 0.01 270);
-  --accent: oklch(0.24 0.02 250);
+  --muted: oklch(0.16 0.01 260);
+  --muted-foreground: oklch(0.70 0.01 260);
+  --accent: oklch(0.24 0.03 280);
   --accent-foreground: oklch(0.98 0 0);
-  --destructive: oklch(0.60 0.22 25);
+  --destructive: oklch(0.65 0.25 25);
   --destructive-foreground: oklch(0.98 0 0);
-  --border: oklch(0.20 0.01 270);
-  --input: oklch(0.20 0.01 270);
-  --ring: oklch(0.65 0.15 250);
-  /* Chart colors - Vibrant for dark mode medical displays */
-  --chart-1: oklch(0.65 0.22 25); /* Red for vital signs */
-  --chart-2: oklch(0.65 0.15 250); /* Blue for ECG/primary */
-  --chart-3: oklch(0.70 0.20 160); /* Green for healthy signals */
-  --chart-4: oklch(0.70 0.18 70); /* Amber for warnings */
-  --chart-5: oklch(0.65 0.18 320); /* Purple for secondary metrics */
-  --sidebar: oklch(0.14 0.01 270);
+  --border: oklch(0.18 0.02 260);
+  --input: oklch(0.18 0.02 260);
+  --ring: oklch(0.70 0.22 280);
+  /* Vibrant chart colors for dark mode */
+  --chart-1: oklch(0.70 0.25 15); /* Bright red */
+  --chart-2: oklch(0.70 0.22 280); /* Bright purple-blue */
+  --chart-3: oklch(0.75 0.22 160); /* Bright green */
+  --chart-4: oklch(0.75 0.20 50); /* Bright orange */
+  --chart-5: oklch(0.70 0.22 320); /* Bright purple-pink */
+  --sidebar: oklch(0.12 0.01 260);
   --sidebar-foreground: oklch(0.98 0 0);
-  --sidebar-primary: oklch(0.65 0.15 250);
-  --sidebar-primary-foreground: oklch(0.10 0.01 270);
-  --sidebar-accent: oklch(0.22 0.01 270);
+  --sidebar-primary: oklch(0.70 0.22 280);
+  --sidebar-primary-foreground: oklch(0.08 0.01 260);
+  --sidebar-accent: oklch(0.20 0.02 260);
   --sidebar-accent-foreground: oklch(0.98 0 0);
-  --sidebar-border: oklch(0.20 0.01 270);
-  --sidebar-ring: oklch(0.65 0.15 250);
+  --sidebar-border: oklch(0.18 0.02 260);
+  --sidebar-ring: oklch(0.70 0.22 280);
 }
 
 @theme inline {
-  --font-sans: "Geist", "Geist Fallback";
-  --font-mono: "Geist Mono", "Geist Mono Fallback";
+  --font-sans: var(--font-inter), system-ui, sans-serif;
+  --font-display: var(--font-poppins), system-ui, sans-serif;
+  --font-mono: ui-monospace, monospace;
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -128,4 +129,81 @@
   body {
     @apply bg-background text-foreground;
   }
+}
+
+/* Custom animations */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slideInFromLeft {
+  from {
+    opacity: 0;
+    transform: translateX(-30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes slideInFromRight {
+  from {
+    opacity: 0;
+    transform: translateX(30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes pulse-glow {
+  0%, 100% {
+    box-shadow: 0 0 20px rgba(139, 92, 246, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 40px rgba(139, 92, 246, 0.6);
+  }
+}
+
+@keyframes gradient-x {
+  0%, 100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+.animate-fade-in-up {
+  animation: fadeInUp 0.6s ease-out;
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.8s ease-out;
+}
+
+.animate-slide-in-left {
+  animation: slideInFromLeft 0.6s ease-out;
+}
+
+.animate-slide-in-right {
+  animation: slideInFromRight 0.6s ease-out;
 }
