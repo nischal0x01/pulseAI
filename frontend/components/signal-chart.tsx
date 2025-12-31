@@ -49,6 +49,29 @@ export function SignalChart({ buffer, color, label, yMin, yMax }: SignalChartPro
 
     const render = () => {
       const { width, height } = dimensionsRef.current
+      // Resolve CSS color variables from the document so canvas gets actual colors
+      const rootStyle = getComputedStyle(document.documentElement)
+      const bgVar = rootStyle.getPropertyValue("--color-background") || rootStyle.getPropertyValue("--background")
+      const borderVar = rootStyle.getPropertyValue("--color-border") || rootStyle.getPropertyValue("--border")
+      const bgColor = bgVar ? bgVar.trim() : "#ffffff"
+      const borderColor = borderVar ? borderVar.trim() : "#e5e7eb"
+
+      // Handle device pixel ratio for crisp rendering
+      const dpr = typeof window !== "undefined" ? window.devicePixelRatio || 1 : 1
+      const displayWidth = Math.max(1, width)
+      const displayHeight = Math.max(1, height)
+      const resWidth = Math.max(1, Math.floor(displayWidth * dpr))
+      const resHeight = Math.max(1, Math.floor(displayHeight * dpr))
+
+      // Resize backing store if needed and scale context to device pixels
+      if (canvas.width !== resWidth || canvas.height !== resHeight) {
+        canvas.width = resWidth
+        canvas.height = resHeight
+        canvas.style.width = `${displayWidth}px`
+        canvas.style.height = `${displayHeight}px`
+        ctx.setTransform(1, 0, 0, 1, 0, 0)
+        ctx.scale(dpr, dpr)
+      }
       const data = buffer.getWindowedData(10000) // 10 second logical window based on buffer timestamps
 
       // If we don't have a valid canvas size yet, skip drawing this frame
@@ -57,9 +80,9 @@ export function SignalChart({ buffer, color, label, yMin, yMax }: SignalChartPro
         return
       }
 
-      // Clear canvas
-      ctx.fillStyle = "hsl(var(--background))"
-      ctx.fillRect(0, 0, width, height)
+      // Clear canvas using resolved CSS variable
+      ctx.fillStyle = bgColor
+      ctx.fillRect(0, 0, displayWidth, displayHeight)
 
       if (data.length === 0) {
         ctx.fillStyle = color
@@ -71,7 +94,7 @@ export function SignalChart({ buffer, color, label, yMin, yMax }: SignalChartPro
       }
 
       // Draw grid
-      ctx.strokeStyle = "hsl(var(--border))"
+      ctx.strokeStyle = borderColor
       ctx.lineWidth = 1
       ctx.setLineDash([2, 4])
 
@@ -118,8 +141,8 @@ export function SignalChart({ buffer, color, label, yMin, yMax }: SignalChartPro
       }
 
       data.forEach((point, index) => {
-        const x = ((point.timestamp - firstTs) / timeRange) * width
-        const y = height - ((point.value - effectiveMin) / valueRange) * height
+        const x = ((point.timestamp - firstTs) / timeRange) * displayWidth
+        const y = displayHeight - ((point.value - effectiveMin) / valueRange) * displayHeight
 
         if (index === 0) {
           ctx.moveTo(x, y)
@@ -136,8 +159,8 @@ export function SignalChart({ buffer, color, label, yMin, yMax }: SignalChartPro
       peaks.forEach((peakTime) => {
         const peakData = data.find((d) => d.timestamp === peakTime)
         if (peakData) {
-          const x = ((peakData.timestamp - firstTs) / timeRange) * width
-          const y = height - ((peakData.value - effectiveMin) / valueRange) * height
+          const x = ((peakData.timestamp - firstTs) / timeRange) * displayWidth
+          const y = displayHeight - ((peakData.value - effectiveMin) / valueRange) * displayHeight
           ctx.beginPath()
           ctx.arc(x, y, 4, 0, 2 * Math.PI)
           ctx.fill()
