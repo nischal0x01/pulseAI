@@ -15,6 +15,21 @@ interface TeamMember {
   image?: string
 }
 
+// Helper function to get image path
+const getImagePath = (name: string): string => {
+  // Convert name to kebab-case for filename
+  const filename = name
+    .toLowerCase()
+    .replace(/,/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/phd/g, "")
+    .trim()
+  
+  // Return image path - images should be placed in public/team/ directory
+  // Expected formats: jpg, jpeg, png, webp
+  return `/team/${filename}.jpg`
+}
+
 const teamMembers: TeamMember[] = [
   {
     name: "Suvesh Gurung",
@@ -22,13 +37,15 @@ const teamMembers: TeamMember[] = [
     linkedin: "https://www.linkedin.com/in/suvesh-gurung-471998294/",
     github: "https://github.com/suveshgurung",
     initials: "SG",
+    image: getImagePath("Suvesh Gurung"),
   },
   {
     name: "Pramisha Sapkota",
     role: "Team Member",
     linkedin: "https://www.linkedin.com/in/pramisha-sapkota-b4549629a/",
-    github: "https://github.com/pramisha-sapkota",
+    github: "https://github.com/pramisha56",
     initials: "PS",
+    image: getImagePath("Pramisha Sapkota"),
   },
   {
     name: "Nischal Subedi",
@@ -36,6 +53,7 @@ const teamMembers: TeamMember[] = [
     linkedin: "https://linkedin.com/in/nischal0x01",
     github: "https://github.com/nischal0x01",
     initials: "NS",
+    image: getImagePath("Nischal Subedi"),
   },
   {
     name: "Arwin Shrestha",
@@ -43,15 +61,17 @@ const teamMembers: TeamMember[] = [
     linkedin: "https://www.linkedin.com/in/arwin-shrestha-7532463a1/",
     github: "https://github.com/sthaarwin",
     initials: "AS",
+    image: getImagePath("Arwin Shrestha"),
   },
 ]
 
 const supervisor: TeamMember = {
-  name: "Rabindra Bista,Phd",
+  name: "Rabindra Bista, Phd",
   role: "Associate Professor",
   linkedin: "https://www.linkedin.com/in/rabindra-bista-phd-16696157/",
   googleScholar: "https://scholar.google.com.tr/citations?user=yToyV6kAAAAJ&hl=tr",
   initials: "RB",
+  image: getImagePath("Rabindra Bista Phd"),
 }
 
 export function AboutSection() {
