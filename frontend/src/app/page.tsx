@@ -20,7 +20,7 @@ function MonitorDashboard() {
         <div className="mx-auto max-w-7xl space-y-10">
           {/* Header with animations */}
           <div className="text-center space-y-6 mb-12 animate-fade-in-up">
-            <h1 className="text-6xl md:text-7xl lg:text-8xl font-extrabold tracking-tight leading-tight font-display">
+            <h1 className="text-6xl md:text-7xl lg:text-8xl font-extrabold from-primary via-purple-600 to-pink-600 font-display">
               <span className="inline-block title-gradient">
                 Pulse
               </span>
@@ -28,7 +28,7 @@ function MonitorDashboard() {
                 AI
               </span>
             </h1>
-            <p className="text-2xl md:text-3xl text-muted-foreground max-w-4xl mx-auto font-medium leading-relaxed font-ui">
+            <p className="text-2xl md:text-2xl text-muted-foreground max-w-4xl mx-auto font-medium leading-relaxed font-ui">
               Real-time cuffless blood pressure monitoring using PPG and ECG signals
             </p>
             <p className="text-lg md:text-xl text-muted-foreground/80 max-w-3xl mx-auto font-ui">

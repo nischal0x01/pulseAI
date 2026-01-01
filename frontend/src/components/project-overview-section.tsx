@@ -8,7 +8,7 @@ export function ProjectOverviewSection() {
     <section className="py-24 bg-gradient-to-b from-background via-muted/30 to-background">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
         <div className="text-center mb-16 animate-fade-in-up">
-          <h2 className="text-5xl md:text-6xl lg:text-7xl font-extrabold tracking-tight mb-6 bg-gradient-to-r from-primary via-purple-600 to-pink-600 bg-clip-text text-transparent font-display">
+          <h2 className="text-5xl md:text-5xl lg:text-5xl font-extrabold tracking-tight mb-6 bg-gradient-to-r from-primary via-purple-600 to-pink-600 bg-clip-text text-transparent font-display pb-2">
             Project Overview
           </h2>
           <p className="text-xl md:text-2xl text-muted-foreground max-w-3xl mx-auto font-medium font-ui">

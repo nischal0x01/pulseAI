@@ -38,7 +38,7 @@ const teamMembers: TeamMember[] = [
     linkedin: "https://www.linkedin.com/in/suvesh-gurung-471998294/",
     github: "https://github.com/suveshgurung",
     initials: "SG",
-    image: getImagePath("Suvesh Gurung"),
+    image: "/team/suvesh-gurung.jpg",
   },
   {
     name: "Pramisha Sapkota",
@@ -54,7 +54,7 @@ const teamMembers: TeamMember[] = [
     linkedin: "https://linkedin.com/in/nischal0x01",
     github: "https://github.com/nischal0x01",
     initials: "NS",
-    image: getImagePath("Nischal Subedi"),
+    image: "/team/nischal-subedi.jpg",
   },
   {
     name: "Arwin Shrestha",
@@ -62,7 +62,7 @@ const teamMembers: TeamMember[] = [
     linkedin: "https://www.linkedin.com/in/arwin-shrestha-7532463a1/",
     github: "https://github.com/sthaarwin",
     initials: "AS",
-    image: getImagePath("Arwin Shrestha"),
+    image: "/team/arwin-shrestha.jpg",
   },
 ]
 
@@ -72,7 +72,7 @@ const supervisor: TeamMember = {
   linkedin: "https://www.linkedin.com/in/rabindra-bista-phd-16696157/",
   googleScholar: "https://scholar.google.com.tr/citations?user=yToyV6kAAAAJ&hl=tr",
   initials: "RB",
-  image: getImagePath("Rabindra Bista, Phd"),
+  image: "/team/rabindra-bista.png",
 }
 
 export function AboutSection() {
