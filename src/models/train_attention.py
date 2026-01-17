@@ -23,7 +23,7 @@ from sklearn.impute import SimpleImputer
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau, ModelCheckpoint
 
 # Import from our modules
-from config import EPOCHS, BATCH_SIZE, VERBOSE, PROCESSED_DATA_DIR, CHECKPOINT_DIR
+from config import EPOCHS, BATCH_SIZE, VERBOSE, PROCESSED_DATA_DIR, CHECKPOINT_DIR, RAW_DATA_DIR, BASE_DATA_DIR
 from data_loader import load_aggregate_data
 from preprocessing import preprocess_signals, create_subject_wise_splits
 from feature_engineering import (

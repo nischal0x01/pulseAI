@@ -58,6 +58,10 @@ ATTENTION_UNITS = 64  # For PAT-based attention mechanism
 DENSE_UNITS = 64
 DROPOUT_RATE = 0.3
 
-# Paths
-PROCESSED_DATA_DIR = '../../data/processed'
-CHECKPOINT_DIR = '../../checkpoints'
+# Paths configuration
+# Use environment variable SCRATCH for HPC systems, otherwise use project directory
+import os
+BASE_DATA_DIR = os.environ.get('SCRATCH', os.path.join(os.path.dirname(__file__), '../..'))
+RAW_DATA_DIR = os.path.join(BASE_DATA_DIR, 'data/raw')
+PROCESSED_DATA_DIR = os.path.join(BASE_DATA_DIR, 'data/processed')
+CHECKPOINT_DIR = os.path.join(BASE_DATA_DIR, 'checkpoints')

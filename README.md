@@ -71,3 +71,22 @@ If you see WebSocket errors in the console:
 2. **Verify the connection URL**: The frontend should connect to `ws://localhost:8080/signals`
 3. **Check network connectivity**: Ensure no firewall is blocking the connection
 4. **Review browser console**: Look for detailed error messages with troubleshooting tips
+
+## 📁 Data Directories
+
+The project uses the following data structure:
+
+- `data/raw/` - Raw dataset files downloaded from PulseDB
+- `data/processed/` - Preprocessed .mat files ready for training
+- `checkpoints/` - Model checkpoints and saved weights
+
+### HPC/SLURM Usage
+
+When running on HPC systems, the code automatically uses the `$SCRATCH` environment variable:
+- Raw data: `$SCRATCH/data/raw/`
+- Processed data: `$SCRATCH/data/processed/`
+- Checkpoints: `$SCRATCH/checkpoints/`
+
+No code changes needed - just set the `$SCRATCH` environment variable and the data loaders will use the correct paths.
+
+See [SLURM_GUIDE.md](SLURM_GUIDE.md) for detailed HPC setup instructions.

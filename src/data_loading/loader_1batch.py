@@ -5,7 +5,9 @@ from pathlib import Path
 # -------------------------------
 # Setup directory
 # -------------------------------
-base_dir = Path("../../data/raw")
+# Use $SCRATCH environment variable for HPC systems
+base_data_dir = os.environ.get('SCRATCH', os.path.join(os.path.dirname(__file__), '../..'))
+base_dir = Path(base_data_dir) / 'data' / 'raw'
 base_dir.mkdir(parents=True, exist_ok=True)
 os.chdir(base_dir)
 

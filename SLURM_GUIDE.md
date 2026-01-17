@@ -26,13 +26,38 @@ Training script for the more complex attention-based model.
 
 Before submitting jobs, make sure:
 
-1. **Data is prepared**: Ensure processed data exists in `data/processed/`
+1. **Data is prepared**: 
+   - Raw data should be in `$SCRATCH/data/raw/` on HPC systems (or `data/raw/` locally)
+   - Processed data should be in `$SCRATCH/data/processed/` on HPC systems (or `data/processed/` locally)
+   - The code automatically uses `$SCRATCH` environment variable for HPC storage
 2. **Email notifications**: Update the `--mail-user` field in the scripts with your email
 3. **Modules are correct**: Verify module names match your cluster's available modules
 4. **Logs directory exists**: The scripts will create it, but you can pre-create it:
    ```bash
    mkdir -p logs
    ```
+
+## Using HPC Scratch Storage
+
+The codebase is configured to automatically use `$SCRATCH` environment variable for data storage on HPC systems:
+
+- **Local development**: Data stored in `data/raw/` and `data/processed/`
+- **HPC with $SCRATCH**: Data stored in `$SCRATCH/data/raw/` and `$SCRATCH/data/processed/`
+
+### Setting up data on HPC:
+
+```bash
+# Your $SCRATCH is typically set automatically, but you can verify:
+echo $SCRATCH
+
+# Copy data to scratch (if needed)
+cp -r data/raw/* $SCRATCH/data/raw/
+cp -r data/processed/* $SCRATCH/data/processed/
+
+# Or download data directly to scratch
+cd src/data_loading
+python loader.py  # Will use $SCRATCH automatically
+```
 
 ## Submitting Jobs
 
