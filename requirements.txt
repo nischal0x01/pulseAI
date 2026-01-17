@@ -1,15 +1,15 @@
-# mat73
+mat73
 numpy
 pandas 
-# scikit-learn
+scikit-learn
 matplotlib
 seaborn
 scipy
-# tensorflow>=2.10.0
-# jupyter
-# ipykernel
+tensorflow>=2.10.0
+jupyter
+ipykernel
 
 # WebSocket server dependencies for development/testing
 fastapi
 uvicorn[standard]
-websockets
+websockets  

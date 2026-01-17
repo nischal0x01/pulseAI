@@ -138,7 +138,8 @@ def train_physiology_informed_model(X_train_phys, y_train, X_val_phys, y_val, X_
         verbose=VERBOSE,
     )
     print("   - Training complete.")
-    
+    #saving the model
+    phys_informed_model.save('../../checkpoints/physiology_informed_model.h5')
     return phys_informed_model, phys_informed_history
 
 
