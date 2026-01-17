@@ -79,6 +79,28 @@ def extract_physiological_features(ecg_signals, ppg_signals, sampling_rate=SAMPL
     # Fill remaining NaNs by forward/backward fill
     pat_sequences = pd.DataFrame(pat_sequences).ffill(axis=1).bfill(axis=1).to_numpy()
     hr_sequences = pd.DataFrame(hr_sequences).ffill(axis=1).bfill(axis=1).to_numpy()
+    
+    # Final safety check: If any NaN values remain (e.g., entire sequence was NaN),
+    # replace with reasonable defaults
+    if np.any(np.isnan(pat_sequences)):
+        # For PAT, use median of valid values or middle of range
+        valid_pat = pat_sequences[~np.isnan(pat_sequences)]
+        if len(valid_pat) > 0:
+            default_pat = np.median(valid_pat)
+        else:
+            default_pat = (PAT_MIN + PAT_MAX) / 2  # Middle of valid range
+        pat_sequences = np.nan_to_num(pat_sequences, nan=default_pat)
+        print(f"   - Warning: Replaced remaining PAT NaNs with {default_pat:.3f}s")
+    
+    if np.any(np.isnan(hr_sequences)):
+        # For HR, use median of valid values or middle of range
+        valid_hr = hr_sequences[~np.isnan(hr_sequences)]
+        if len(valid_hr) > 0:
+            default_hr = np.median(valid_hr)
+        else:
+            default_hr = (HR_MIN + HR_MAX) / 2  # Middle of valid range
+        hr_sequences = np.nan_to_num(hr_sequences, nan=default_hr)
+        print(f"   - Warning: Replaced remaining HR NaNs with {default_hr:.1f} bpm")
 
     print(f"   - PAT sequences created with shape: {pat_sequences.shape}")
     print(f"   - HR sequences created with shape: {hr_sequences.shape}")

@@ -2,8 +2,10 @@ import os
 import subprocess
 from pathlib import Path
 
-base_dir = Path("../../data/raw")
-base_dir.mkdir(exist_ok=True)
+# Use $SCRATCH environment variable for HPC systems
+base_data_dir = os.environ.get('SCRATCH', os.path.join(os.path.dirname(__file__), '../..'))
+base_dir = Path(base_data_dir) / 'data' / 'raw'
+base_dir.mkdir(parents=True, exist_ok=True)
 os.chdir(base_dir)
 
 mimic_urls = [

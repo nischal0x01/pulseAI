@@ -17,7 +17,7 @@ from sklearn.model_selection import train_test_split
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
 
 # Import from our modules
-from config import EPOCHS, BATCH_SIZE, VERBOSE, PROCESSED_DATA_DIR
+from config import EPOCHS, BATCH_SIZE, VERBOSE, PROCESSED_DATA_DIR, RAW_DATA_DIR, BASE_DATA_DIR
 from data_loader import load_aggregate_data
 from preprocessing import preprocess_signals, create_subject_wise_splits
 from feature_engineering import (
@@ -138,7 +138,8 @@ def train_physiology_informed_model(X_train_phys, y_train, X_val_phys, y_val, X_
         verbose=VERBOSE,
     )
     print("   - Training complete.")
-    
+    #saving the model
+    phys_informed_model.save('../../checkpoints/physiology_informed_model.h5')
     return phys_informed_model, phys_informed_history
 
 
