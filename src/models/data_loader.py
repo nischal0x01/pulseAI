@@ -121,7 +121,7 @@ def _read_subj_wins(path, field='Subj_Wins', sample_limit=None):
     weight_arr = np.array(weights, dtype=float)
 
     demographics = np.column_stack([age_arr, gender_arr, height_arr, weight_arr])
-    return sigs, sbp_arr, demographics
+    return sigs, sbp_arr, dbp_arr, demographics
 
 
 def load_aggregate_data(processed_dir='../data/processed'):
@@ -129,21 +129,21 @@ def load_aggregate_data(processed_dir='../data/processed'):
     processed_dir = Path(processed_dir)
     if not processed_dir.exists():
         print("❌ Processed data directory not found.")
-        return None, None, None, None
+        return None, None, None, None, None
 
     mat_files = sorted([f for f in os.listdir(processed_dir) if f.endswith('.mat')])
     if not mat_files:
         print("❌ No .mat files found in the processed data directory.")
-        return None, None, None, None
+        return None, None, None, None, None
 
-    all_signals, all_labels, all_demographics, all_patient_ids = [], [], [], []
+    all_signals, all_sbp_labels, all_dbp_labels, all_demographics, all_patient_ids = [], [], [], [], []
 
     print(f"🔄 Loading data from {len(mat_files)} patient files...")
     for file_name in mat_files:
         patient_id = file_name.split('.')[0]
         file_path = str(processed_dir / file_name)
 
-        signals, sbp, demographics = None, None, None
+        signals, sbp, dbp, demographics = None, None, None, None
 
         try:
             # First, try to load with scipy.io.loadmat for older MAT files
@@ -156,6 +156,7 @@ def load_aggregate_data(processed_dir='../data/processed'):
                 # Ensure signals are correctly stacked
                 signals = np.array([np.vstack([p.ravel(), e.ravel()]) for p, e in zip(ppg, ecg)])
                 sbp = subset.SegSBP
+                dbp = subset.SegDBP
 
                 age = subset.Age
                 gender = subset.Gender
@@ -171,7 +172,7 @@ def load_aggregate_data(processed_dir='../data/processed'):
             msg = str(e).lower()
             if 'hdf' in msg or '7.3' in msg or 'h5py' in msg:
                 try:
-                    signals, sbp, demographics = _read_subj_wins(file_path)
+                    signals, sbp, dbp, demographics = _read_subj_wins(file_path)
                 except Exception as h5_e:
                     print(f"   ❌ Failed to load {file_name} with HDF5 reader. Error: {h5_e}")
                     continue
@@ -181,32 +182,36 @@ def load_aggregate_data(processed_dir='../data/processed'):
 
         if signals is not None and len(signals) > 0:
             all_signals.append(signals)
-            all_labels.append(sbp)
+            all_sbp_labels.append(sbp)
+            all_dbp_labels.append(dbp)
             all_demographics.append(demographics)
             all_patient_ids.extend([patient_id] * len(signals))
 
     if not all_signals:
         print("❌ No data could be loaded from any files.")
-        return None, None, None, None
+        return None, None, None, None, None
 
     # Concatenate all data
     signals_agg = np.vstack(all_signals)
-    labels_agg = np.concatenate(all_labels)
+    sbp_labels_agg = np.concatenate(all_sbp_labels)
+    dbp_labels_agg = np.concatenate(all_dbp_labels)
     demographics_agg = np.vstack(all_demographics)
     patient_ids_agg = np.array(all_patient_ids)
 
-    # Filter out rows with NaN labels
-    valid_indices = ~np.isnan(labels_agg)
+    # Filter out rows with NaN labels in either SBP or DBP
+    valid_indices = ~(np.isnan(sbp_labels_agg) | np.isnan(dbp_labels_agg))
     signals_agg = signals_agg[valid_indices]
-    labels_agg = labels_agg[valid_indices]
+    sbp_labels_agg = sbp_labels_agg[valid_indices]
+    dbp_labels_agg = dbp_labels_agg[valid_indices]
     demographics_agg = demographics_agg[valid_indices]
     patient_ids_agg = patient_ids_agg[valid_indices]
 
     print(f"✅ Aggregated data loaded successfully!")
     print(f"   - Total signals: {signals_agg.shape}")
-    print(f"   - Total labels: {labels_agg.shape}")
+    print(f"   - Total SBP labels: {sbp_labels_agg.shape}")
+    print(f"   - Total DBP labels: {dbp_labels_agg.shape}")
     print(f"   - Total demographics: {demographics_agg.shape}")
     print(f"   - Total patient IDs: {patient_ids_agg.shape}")
     print(f"   - Unique patients: {len(np.unique(patient_ids_agg))}")
 
-    return signals_agg, labels_agg, demographics_agg, patient_ids_agg
+    return signals_agg, sbp_labels_agg, dbp_labels_agg, demographics_agg, patient_ids_agg

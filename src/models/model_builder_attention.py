@@ -132,16 +132,17 @@ def create_phys_informed_cnn_lstm_attention(input_shape, return_attention=False)
     dense = Dense(DENSE_UNITS, activation='relu', name='dense_1')(lstm_out)
     dense = Dropout(DROPOUT_RATE, name='dropout_5')(dense)
     
-    # Output: Systolic Blood Pressure (SBP)
-    output = Dense(1, activation='linear', name='sbp_output')(dense)
+    # Dual outputs: Systolic Blood Pressure (SBP) and Diastolic Blood Pressure (DBP)
+    sbp_output = Dense(1, activation='linear', name='sbp_output')(dense)
+    dbp_output = Dense(1, activation='linear', name='dbp_output')(dense)
     
     # Create model
     if return_attention:
-        model = Model(inputs=inputs, outputs=[output, attention_weights], 
-                     name='PhysInformed_CNN_LSTM_Attention')
+        model = Model(inputs=inputs, outputs=[sbp_output, dbp_output, attention_weights], 
+                     name='PhysInformed_CNN_LSTM_Attention_Dual')
     else:
-        model = Model(inputs=inputs, outputs=output, 
-                     name='PhysInformed_CNN_LSTM_Attention')
+        model = Model(inputs=inputs, outputs=[sbp_output, dbp_output], 
+                     name='PhysInformed_CNN_LSTM_Attention_Dual')
     
     # Compile with Huber loss and Adam with gradient clipping
     optimizer = Adam(
@@ -150,8 +151,18 @@ def create_phys_informed_cnn_lstm_attention(input_shape, return_attention=False)
     )
     model.compile(
         optimizer=optimizer,
-        loss=Huber(delta=1.0),
-        metrics=['mae', 'mse']
+        loss={
+            'sbp_output': Huber(delta=1.0),
+            'dbp_output': Huber(delta=1.0)
+        },
+        loss_weights={
+            'sbp_output': 1.0,
+            'dbp_output': 1.0
+        },
+        metrics={
+            'sbp_output': ['mae', 'mse'],
+            'dbp_output': ['mae', 'mse']
+        }
     )
     
     return model

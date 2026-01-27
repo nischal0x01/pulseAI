@@ -26,7 +26,7 @@ echo "=========================================="
 # Load required modules
 module purge
 module load cuda/11.8
-module load cudnn/8.6
+module load cudnn/8.6c
 module load python/3.10
 
 # Create logs directory if it doesn't exist

@@ -68,7 +68,7 @@ def main():
     
     # ===== Step 1: Load Data =====
     print("📂 STEP 1: Loading data...")
-    signals_agg, labels_agg, demographics_agg, patient_ids_agg = load_aggregate_data(
+    signals_agg, sbp_labels_agg, dbp_labels_agg, demographics_agg, patient_ids_agg = load_aggregate_data(
         PROCESSED_DATA_DIR
     )
     
@@ -81,11 +81,13 @@ def main():
     print("   - Applying bandpass filters (PPG: 0.5-8 Hz, ECG: 0.5-40 Hz)")
     print("   - Normalizing with Z-score")
     processed_signals = preprocess_signals(signals_agg)
-    y = labels_agg
+    y_sbp = sbp_labels_agg
+    y_dbp = dbp_labels_agg
     
     # Validate preprocessed signals
     validate_data_integrity(processed_signals, "Preprocessed signals")
-    validate_data_integrity(y, "Labels")
+    validate_data_integrity(y_sbp, "SBP Labels")
+    validate_data_integrity(y_dbp, "DBP Labels")
     
     # ===== Step 3: Create Patient-Wise Splits =====
     print("\n📊 STEP 3: Creating patient-wise data splits...")
@@ -138,23 +140,33 @@ def main():
     X_val_phys = X_phys_informed[val_mask]
     X_test_phys = X_phys_informed[test_mask]
     
-    y_train = y[train_mask]
-    y_val = y[val_mask]
-    y_test = y[test_mask]
+    y_train_sbp = y_sbp[train_mask]
+    y_val_sbp = y_sbp[val_mask]
+    y_test_sbp = y_sbp[test_mask]
+    
+    y_train_dbp = y_dbp[train_mask]
+    y_val_dbp = y_dbp[val_mask]
+    y_test_dbp = y_dbp[test_mask]
     
     # Final validation before training
     print("\n✅ STEP 7: Final data validation...")
     validate_data_integrity(X_train_phys, "Training features")
     validate_data_integrity(X_val_phys, "Validation features")
     validate_data_integrity(X_test_phys, "Test features")
-    validate_data_integrity(y_train, "Training labels")
-    validate_data_integrity(y_val, "Validation labels")
-    validate_data_integrity(y_test, "Test labels")
+    validate_data_integrity(y_train_sbp, "Training SBP labels")
+    validate_data_integrity(y_val_sbp, "Validation SBP labels")
+    validate_data_integrity(y_test_sbp, "Test SBP labels")
+    validate_data_integrity(y_train_dbp, "Training DBP labels")
+    validate_data_integrity(y_val_dbp, "Validation DBP labels")
+    validate_data_integrity(y_test_dbp, "Test DBP labels")
     
     print(f"\n📐 Data shapes:")
-    print(f"   X_train: {X_train_phys.shape}, y_train: {y_train.shape}")
-    print(f"   X_val:   {X_val_phys.shape}, y_val: {y_val.shape}")
-    print(f"   X_test:  {X_test_phys.shape}, y_test: {y_test.shape}")
+    print(f"   X_train: {X_train_phys.shape}")
+    print(f"   y_train_sbp: {y_train_sbp.shape}, y_train_dbp: {y_train_dbp.shape}")
+    print(f"   X_val: {X_val_phys.shape}")
+    print(f"   y_val_sbp: {y_val_sbp.shape}, y_val_dbp: {y_val_dbp.shape}")
+    print(f"   X_test: {X_test_phys.shape}")
+    print(f"   y_test_sbp: {y_test_sbp.shape}, y_test_dbp: {y_test_dbp.shape}")
     
     # Verify 4 channels
     assert X_train_phys.shape[-1] == 4, "Expected 4 channels: [ECG, PPG, PAT, HR]"
@@ -205,12 +217,13 @@ def main():
     print(f"   - Batch size: {BATCH_SIZE}")
     print(f"   - Loss: Huber (robust to outliers)")
     print(f"   - Optimizer: Adam with gradient clipping")
+    print(f"   - Outputs: SBP and DBP (dual prediction)")
     print(f"   - Callbacks: EarlyStopping, ReduceLROnPlateau, ModelCheckpoint\n")
     
     history = phys_informed_model.fit(
         X_train_phys,
-        y_train,
-        validation_data=(X_val_phys, y_val),
+        {'sbp_output': y_train_sbp, 'dbp_output': y_train_dbp},
+        validation_data=(X_val_phys, {'sbp_output': y_val_sbp, 'dbp_output': y_val_dbp}),
         epochs=EPOCHS,
         batch_size=BATCH_SIZE,
         callbacks=callbacks_list,
@@ -221,26 +234,48 @@ def main():
     
     # ===== Step 11: Plot Training History =====
     print("\n📈 STEP 11: Plotting training history...")
-    fig, axes = plt.subplots(1, 2, figsize=(15, 5))
+    fig, axes = plt.subplots(2, 2, figsize=(15, 10))
     
     # Loss plot
-    axes[0].plot(history.history['loss'], label='Training Loss', linewidth=2)
-    axes[0].plot(history.history['val_loss'], label='Validation Loss', linewidth=2)
-    axes[0].set_xlabel('Epoch', fontsize=12, fontweight='bold')
-    axes[0].set_ylabel('Loss (Huber)', fontsize=12, fontweight='bold')
-    axes[0].set_title('Model Loss Over Time', fontsize=14, fontweight='bold')
-    axes[0].legend(fontsize=10)
-    axes[0].grid(True, alpha=0.3)
+    axes[0, 0].plot(history.history['loss'], label='Training Loss', linewidth=2)
+    axes[0, 0].plot(history.history['val_loss'], label='Validation Loss', linewidth=2)
+    axes[0, 0].set_xlabel('Epoch', fontsize=12, fontweight='bold')
+    axes[0, 0].set_ylabel('Loss (Huber)', fontsize=12, fontweight='bold')
+    axes[0, 0].set_title('Total Model Loss Over Time', fontsize=14, fontweight='bold')
+    axes[0, 0].legend(fontsize=10)
+    axes[0, 0].grid(True, alpha=0.3)
     
-    # MAE plot
-    axes[1].plot(history.history['mae'], label='Training MAE', linewidth=2)
-    axes[1].plot(history.history['val_mae'], label='Validation MAE', linewidth=2)
-    axes[1].axhline(y=10, color='r', linestyle='--', label='Target MAE (10 mmHg)', linewidth=2)
-    axes[1].set_xlabel('Epoch', fontsize=12, fontweight='bold')
-    axes[1].set_ylabel('MAE (mmHg)', fontsize=12, fontweight='bold')
-    axes[1].set_title('Mean Absolute Error Over Time', fontsize=14, fontweight='bold')
-    axes[1].legend(fontsize=10)
-    axes[1].grid(True, alpha=0.3)
+    # SBP MAE plot
+    axes[0, 1].plot(history.history['sbp_output_mae'], label='Training SBP MAE', linewidth=2)
+    axes[0, 1].plot(history.history['val_sbp_output_mae'], label='Validation SBP MAE', linewidth=2)
+    axes[0, 1].axhline(y=10, color='r', linestyle='--', label='Target MAE (10 mmHg)', linewidth=2)
+    axes[0, 1].set_xlabel('Epoch', fontsize=12, fontweight='bold')
+    axes[0, 1].set_ylabel('MAE (mmHg)', fontsize=12, fontweight='bold')
+    axes[0, 1].set_title('SBP Mean Absolute Error Over Time', fontsize=14, fontweight='bold')
+    axes[0, 1].legend(fontsize=10)
+    axes[0, 1].grid(True, alpha=0.3)
+    
+    # DBP MAE plot
+    axes[1, 0].plot(history.history['dbp_output_mae'], label='Training DBP MAE', linewidth=2)
+    axes[1, 0].plot(history.history['val_dbp_output_mae'], label='Validation DBP MAE', linewidth=2)
+    axes[1, 0].axhline(y=10, color='r', linestyle='--', label='Target MAE (10 mmHg)', linewidth=2)
+    axes[1, 0].set_xlabel('Epoch', fontsize=12, fontweight='bold')
+    axes[1, 0].set_ylabel('MAE (mmHg)', fontsize=12, fontweight='bold')
+    axes[1, 0].set_title('DBP Mean Absolute Error Over Time', fontsize=14, fontweight='bold')
+    axes[1, 0].legend(fontsize=10)
+    axes[1, 0].grid(True, alpha=0.3)
+    
+    # Combined MAE comparison
+    axes[1, 1].plot(history.history['sbp_output_mae'], label='Training SBP MAE', linewidth=2, linestyle='--')
+    axes[1, 1].plot(history.history['dbp_output_mae'], label='Training DBP MAE', linewidth=2, linestyle='--')
+    axes[1, 1].plot(history.history['val_sbp_output_mae'], label='Val SBP MAE', linewidth=2)
+    axes[1, 1].plot(history.history['val_dbp_output_mae'], label='Val DBP MAE', linewidth=2)
+    axes[1, 1].axhline(y=10, color='r', linestyle='--', label='Target (10 mmHg)', linewidth=2)
+    axes[1, 1].set_xlabel('Epoch', fontsize=12, fontweight='bold')
+    axes[1, 1].set_ylabel('MAE (mmHg)', fontsize=12, fontweight='bold')
+    axes[1, 1].set_title('SBP vs DBP Performance', fontsize=14, fontweight='bold')
+    axes[1, 1].legend(fontsize=9)
+    axes[1, 1].grid(True, alpha=0.3)
     
     plt.tight_layout()
     plt.savefig(os.path.join(CHECKPOINT_DIR, 'training_history.png'), dpi=300, bbox_inches='tight')
@@ -251,7 +286,7 @@ def main():
     val_results = comprehensive_evaluation(
         phys_informed_model,
         X_val_phys,
-        y_val,
+        {'sbp': y_val_sbp, 'dbp': y_val_dbp},
         dataset_name="Validation",
         visualize_attention=False,
         save_dir=CHECKPOINT_DIR
@@ -268,13 +303,14 @@ def main():
     attention_model.set_weights(phys_informed_model.get_weights())
     
     # Get predictions and attention weights
-    y_pred_test, attention_weights = attention_model.predict(X_test_phys, verbose=0)
+    predictions = attention_model.predict(X_test_phys, verbose=0)
+    y_pred_sbp, y_pred_dbp, attention_weights = predictions[0], predictions[1], predictions[2]
     
     # Perform comprehensive evaluation
     test_results = comprehensive_evaluation(
         attention_model,
         X_test_phys,
-        y_test,
+        {'sbp': y_test_sbp, 'dbp': y_test_dbp},
         dataset_name="Test",
         visualize_attention=True,
         save_dir=CHECKPOINT_DIR
@@ -285,20 +321,24 @@ def main():
     print("  TRAINING COMPLETE - FINAL SUMMARY")
     print("="*70)
     print(f"\n📊 Validation Set Performance:")
-    print(f"   MAE:  {val_results['metrics']['MAE']:.2f} mmHg")
-    print(f"   RMSE: {val_results['metrics']['RMSE']:.2f} mmHg")
-    print(f"   R²:   {val_results['metrics']['R2']:.4f}")
+    print(f"   SBP - MAE: {val_results['metrics']['sbp']['MAE']:.2f} mmHg, RMSE: {val_results['metrics']['sbp']['RMSE']:.2f} mmHg, R²: {val_results['metrics']['sbp']['R2']:.4f}")
+    print(f"   DBP - MAE: {val_results['metrics']['dbp']['MAE']:.2f} mmHg, RMSE: {val_results['metrics']['dbp']['RMSE']:.2f} mmHg, R²: {val_results['metrics']['dbp']['R2']:.4f}")
     
     print(f"\n📊 Test Set Performance:")
-    print(f"   MAE:  {test_results['metrics']['MAE']:.2f} mmHg")
-    print(f"   RMSE: {test_results['metrics']['RMSE']:.2f} mmHg")
-    print(f"   R²:   {test_results['metrics']['R2']:.4f}")
-    print(f"   Pearson r: {test_results['metrics']['Pearson_r']:.4f}")
+    print(f"   SBP - MAE: {test_results['metrics']['sbp']['MAE']:.2f} mmHg, RMSE: {test_results['metrics']['sbp']['RMSE']:.2f} mmHg, R²: {test_results['metrics']['sbp']['R2']:.4f}")
+    print(f"   DBP - MAE: {test_results['metrics']['dbp']['MAE']:.2f} mmHg, RMSE: {test_results['metrics']['dbp']['RMSE']:.2f} mmHg, R²: {test_results['metrics']['dbp']['R2']:.4f}")
     
-    if test_results['metrics']['MAE'] < 10.0:
-        print(f"\n🎉 SUCCESS! MAE < 10 mmHg target achieved!")
+    sbp_success = test_results['metrics']['sbp']['MAE'] < 10.0
+    dbp_success = test_results['metrics']['dbp']['MAE'] < 10.0
+    
+    if sbp_success and dbp_success:
+        print(f"\n🎉 SUCCESS! Both SBP and DBP MAE < 10 mmHg target achieved!")
+    elif sbp_success:
+        print(f"\n✅ SBP target achieved! DBP needs improvement.")
+    elif dbp_success:
+        print(f"\n✅ DBP target achieved! SBP needs improvement.")
     else:
-        print(f"\n⚠️  Target not yet met. Consider:")
+        print(f"\n⚠️  Targets not yet met. Consider:")
         print(f"   - Increasing model capacity")
         print(f"   - Adding more training data")
         print(f"   - Tuning hyperparameters")
