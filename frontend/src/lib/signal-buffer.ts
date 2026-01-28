@@ -10,6 +10,8 @@ export interface SignalMetrics {
   lastRRInterval: number
   estimatedSBP: number
   estimatedDBP: number
+  confidence?: number
+  isModelPrediction?: boolean
 }
 
 export class SignalBuffer {

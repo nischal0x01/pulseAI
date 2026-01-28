@@ -1,13 +1,14 @@
 mat73
-numpy
+numpy==1.23.5
 pandas 
 scikit-learn
 matplotlib
 seaborn
 scipy
-tensorflow>=2.10.0
+tensorflow==2.10.0
 jupyter
 ipykernel
+tensorflowjs
 
 # WebSocket server dependencies for development/testing
 fastapi

@@ -5,6 +5,7 @@ import { ConnectionStatus } from "@/components/connection-status"
 import { SignalChart } from "@/components/signal-chart"
 import { SignalControls } from "@/components/signal-controls"
 import { SignalMetrics } from "@/components/signal-metrics"
+import { BPPredictor } from "@/components/bp-predictor"
 import { ProjectOverviewSection } from "@/components/project-overview-section"
 import { TerminologiesSection } from "@/components/terminologies-section"
 import { AboutSection } from "@/components/about-section"
@@ -71,6 +72,11 @@ function MonitorDashboard() {
           {/* Metrics */}
           <div className="animate-fade-in-up delay-200">
             <SignalMetrics />
+          </div>
+
+          {/* AI BP Predictor */}
+          <div className="animate-fade-in-up delay-300">
+            <BPPredictor />
           </div>
 
           {/* Charts Grid */}

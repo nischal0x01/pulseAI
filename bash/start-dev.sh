@@ -26,12 +26,12 @@ start_backend() {
     # Check if requirements are installed
     if ! python3 -c "import fastapi, uvicorn" &> /dev/null; then
         echo "📦 Installing Python dependencies..."
-        pip3 install -r requirements.txt
+        pip3 install -r ../requirements/requirements.txt
     fi
     
     # Start the backend server
     echo "🚀 Backend server starting on http://localhost:8080"
-    python3 mock_esp32_server.py &
+    python3 mock_server/mock_esp32_server.py &
     BACKEND_PID=$!
     echo "Backend PID: $BACKEND_PID"
 }
@@ -39,7 +39,6 @@ start_backend() {
 # Function to start frontend
 start_frontend() {
     echo "🖥️  Starting Next.js Frontend..."
-    
     cd frontend
     
     # Check if node_modules exists
