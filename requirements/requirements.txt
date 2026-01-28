@@ -1,5 +1,5 @@
 mat73
-numpy==1.23.5
+numpy
 pandas 
 scikit-learn
 matplotlib

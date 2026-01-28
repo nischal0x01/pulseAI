@@ -207,6 +207,7 @@ def main():
             filepath=os.path.join(CHECKPOINT_DIR, 'best_model.h5'),
             monitor='val_loss',
             save_best_only=True,
+            save_weights_only=False,
             verbose=1
         )
     ]

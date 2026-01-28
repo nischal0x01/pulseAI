@@ -8,6 +8,39 @@ export interface ModelPrediction {
   confidence: number
 }
 
+// Custom Lambda layer for extracting PAT channel (xs[:, :, 3:4])
+class ExtractPATLayer extends tf.layers.Layer {
+  constructor(config?: tf.serialization.ConfigDict) {
+    super(config || {});
+  }
+
+  static get className() {
+    return 'Lambda';
+  }
+
+  call(inputs: tf.Tensor | tf.Tensor[]): tf.Tensor | tf.Tensor[] {
+    return tf.tidy(() => {
+      const input = inputs as tf.Tensor;
+      // Extract the 4th channel (index 3) which is the PAT channel
+      // Input shape: [batch, 875, 4] -> Output shape: [batch, 875, 1]
+      return tf.slice(input, [0, 0, 3], [-1, -1, 1]);
+    });
+  }
+
+  getConfig(): tf.serialization.ConfigDict {
+    const config = super.getConfig();
+    return config;
+  }
+
+  computeOutputShape(inputShape: tf.Shape | tf.Shape[]): tf.Shape | tf.Shape[] {
+    const shape = inputShape as tf.Shape;
+    return [shape[0], shape[1], 1];
+  }
+}
+
+// Register the custom layer
+tf.serialization.registerClass(ExtractPATLayer);
+
 export class BloodPressureModel {
   private model: tf.LayersModel | null = null
   private isLoading: boolean = false
@@ -22,7 +55,10 @@ export class BloodPressureModel {
 
     try {
       console.log('Loading TensorFlow.js model...')
+      
+      // Load model - custom layer is already registered globally
       this.model = await tf.loadLayersModel('/models/model.json')
+      
       console.log('✓ Model loaded successfully')
       console.log('  - Input shape:', this.model.inputs[0].shape)
       console.log('  - Output shape:', this.model.outputs.map(o => o.shape))
