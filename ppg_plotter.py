@@ -1,10 +1,12 @@
 import serial
 import numpy as np
-from scipy.signal import butter, filtfilt, lfilter, lfilter_zi
+from scipy.signal import butter, lfilter, lfilter_zi
 import matplotlib.pyplot as plt
 from collections import deque
+import csv
+import time
 
-WINDOW_SIZE = 1000
+WINDOW_SIZE = 2000
 AXIS_UPDATE_INTERVAL = 200
 
 def setup_serial_port():
@@ -59,17 +61,17 @@ def main():
     ser = setup_serial_port()
     ax, plt, line_ir = setup_axis()
 
-    ymin_hold = None
-    ymax_hold = None
-    AXIS_MARGIN = 0.15
-    
-    # raw_buffer = deque(maxlen=WINDOW_SIZE)
     filtered_buffer = deque(maxlen=WINDOW_SIZE)
+
+    csv_file = open("ppg_stream.csv", "a", newline="")
+    csv_writer = csv.writer(csv_file)
+
+    if csv_file.tell() == 0:
+        csv_writer.writerow(["timestamp", "ir_raw", "ir_filtered"])
+
 
     while True:
         try:
-            # if ser.in_waiting > 0:
-            #     line = ser.readline().decode('utf-8').strip()
             line_bytes = ser.readline()
             if not line_bytes:
                 continue
@@ -81,14 +83,17 @@ def main():
             dc_est += DC_ALPHA * (ir - dc_est)
             ac = ir - dc_est
 
-            # raw_buffer.append(ir)
-    
             if not filter_initialized:
                 zi = lfilter_zi(b, a) * ac
                 filter_initialized = True
 
             filtered_sample, zi = lfilter(b, a, [ac], zi=zi)
-            filtered_buffer.append(filtered_sample[0])
+            filtered_value = filtered_sample[0]
+            filtered_buffer.append(filtered_value)
+
+            timestamp = time.time()
+
+            csv_writer.writerow([timestamp, ir, filtered_value])
 
             sample_count += 1
     
@@ -100,25 +105,9 @@ def main():
 
                 line_ir.set_data(x, y)
                 
-    #             current_axis_min = y.min()
-    #             current_axis_max = y.max()
-    # 
-    #             if ymin_hold is None:
-    #                 ymin_hold = current_axis_min
-    #                 ymax_hold = current_axis_max
-    #             else:
-    #                 if current_axis_min < ymin_hold:
-    #                     ymin_hold = current_axis_min
-    #                 if current_axis_max > ymax_hold:
-    #                     ymax_hold = current_axis_max
-    # 
-    #             span = ymax_hold - ymin_hold + 1e-6
-    #             margin = AXIS_MARGIN * span
-    
                 ax.set_xlim(0, len(y))
 
                 if sample_count % AXIS_UPDATE_INTERVAL == 0:
-                    # ax.set_ylim(ymin_hold - margin, ymax_hold + margin)
                     ax.set_ylim(y.min() - 0.5, y.max() + 0.5)
     
                 plt.pause(0.001)
