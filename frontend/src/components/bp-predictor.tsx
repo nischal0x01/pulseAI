@@ -99,11 +99,14 @@ export function BPPredictor() {
       <Alert variant="destructive">
         <AlertCircle className="h-4 w-4" />
         <AlertDescription>
-          <strong>Model Error:</strong> {modelError}
+          <strong>API Connection Error:</strong> {modelError}
           <br />
           <span className="text-xs mt-1 block">
-            Make sure the model is converted and placed in <code>public/models/model.json</code>
+            Make sure the Python backend API is running on port 8000
           </span>
+          <code className="text-xs block bg-destructive/10 p-2 rounded mt-2">
+            python api_server.py
+          </code>
         </AlertDescription>
       </Alert>
     )
