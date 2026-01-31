@@ -20,6 +20,7 @@ export interface BufferSample {
 export interface SignalMetrics {
   heartRate: number
   signalQuality: number
+  amplitude: number
   lastRRInterval: number
   estimatedSBP: number
   estimatedDBP: number
@@ -70,6 +71,7 @@ export class SignalBuffer {
       return {
         heartRate: 0,
         signalQuality: 0,
+        amplitude: 0,
         lastRRInterval: 0,
         estimatedSBP: 0,
         estimatedDBP: 0,
@@ -104,6 +106,7 @@ export class SignalBuffer {
     return {
       heartRate,
       signalQuality,
+      amplitude,
       lastRRInterval,
       estimatedSBP,
       estimatedDBP,
