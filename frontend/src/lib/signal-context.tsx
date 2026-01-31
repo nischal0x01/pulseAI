@@ -5,6 +5,13 @@ import { createContext, useContext, useEffect, useState, useCallback } from "rea
 import { WebSocketManager, type ConnectionStatus, type SignalData } from "./websocket-manager"
 import { SignalBuffer } from "./signal-buffer"
 
+// Signal buffer configuration constants
+const PPG_SAMPLING_RATE = 250 // Hz
+const ECG_SAMPLING_RATE = 500 // Hz
+const BUFFER_WINDOW_DURATION_MS = 10000 // 10 seconds
+const PPG_BUFFER_SIZE = 2500 // 10 seconds at 250Hz
+const ECG_BUFFER_SIZE = 5000 // 10 seconds at 500Hz
+
 interface SignalContextType {
   connectionStatus: ConnectionStatus
   connectionError: string | null
@@ -46,18 +53,18 @@ export function SignalProvider({ children }: { children: React.ReactNode }) {
   const [ppgBuffer] = useState(
     () =>
       new SignalBuffer({
-        maxSize: 2500, // 10 seconds at 250Hz
-        samplingRate: 250,
-        windowDuration: 10000,
+        maxSize: PPG_BUFFER_SIZE,
+        samplingRate: PPG_SAMPLING_RATE,
+        windowDuration: BUFFER_WINDOW_DURATION_MS,
       }),
   )
 
   const [ecgBuffer] = useState(
     () =>
       new SignalBuffer({
-        maxSize: 5000, // 10 seconds at 500Hz
-        samplingRate: 500,
-        windowDuration: 10000,
+        maxSize: ECG_BUFFER_SIZE,
+        samplingRate: ECG_SAMPLING_RATE,
+        windowDuration: BUFFER_WINDOW_DURATION_MS,
       }),
   )
 

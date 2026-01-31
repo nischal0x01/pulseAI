@@ -37,14 +37,21 @@ export type ConnectionStatus = "connecting" | "connected" | "disconnected" | "er
 type SignalCallback = (data: SignalData) => void
 type StatusCallback = (status: ConnectionStatus) => void
 
+// WebSocket configuration constants
+const MAX_RECONNECT_ATTEMPTS = 5
+const INITIAL_RECONNECT_DELAY_MS = 1000
+const CONNECTION_TIMEOUT_MS = 10000
+const HEARTBEAT_INTERVAL_MS = 30000
+const HEARTBEAT_TIMEOUT_MS = 35000
+
 export class WebSocketManager {
   private ws: WebSocket | null = null
   private reconnectTimer: NodeJS.Timeout | null = null
   private connectionTimer: NodeJS.Timeout | null = null
   private reconnectAttempts = 0
-  private maxReconnectAttempts = 5
-  private reconnectDelay = 1000
-  private connectionTimeout = 10000 // 10 seconds
+  private readonly maxReconnectAttempts = MAX_RECONNECT_ATTEMPTS
+  private readonly reconnectDelay = INITIAL_RECONNECT_DELAY_MS
+  private readonly connectionTimeout = CONNECTION_TIMEOUT_MS
   private heartbeatInterval: NodeJS.Timeout | null = null
   private lastHeartbeat = 0
 

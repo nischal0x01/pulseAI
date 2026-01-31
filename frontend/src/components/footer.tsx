@@ -36,7 +36,7 @@ export function Footer() {
             href="https://github.com/nischal0x01/pulseAI"
             target="_blank"
             rel="noopener noreferrer"
-            className="ßgroup p-3 rounded-xl bg-muted/50 hover:bg-primary/10 text-muted-foreground hover:text-foreground transition-all duration-300 hover:scale-110 hover:rotate-6 hover:shadow-lg hover:shadow-primary/20"
+            className="item-center item-justify-center group p-3 rounded-xl bg-muted/50 hover:bg-primary/10 text-muted-foreground hover:text-foreground transition-all duration-300 hover:scale-110 hover:rotate-6 hover:shadow-lg hover:shadow-primary/20"
             aria-label="GitHub Repository"
           >
             <Github className="h-6 w-6 transition-transform duration-300 group-hover:rotate-12" />

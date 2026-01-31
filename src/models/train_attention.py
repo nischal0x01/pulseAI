@@ -16,15 +16,22 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import warnings
 import os
+import json
+from datetime import datetime
 warnings.filterwarnings('ignore')
 
 from sklearn.preprocessing import StandardScaler
 from sklearn.impute import SimpleImputer
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau, ModelCheckpoint
+from tensorflow.keras import backend as K
 
 # Import from our modules
 from config import EPOCHS, BATCH_SIZE, VERBOSE, PROCESSED_DATA_DIR, CHECKPOINT_DIR, RAW_DATA_DIR, BASE_DATA_DIR
 from data_loader import load_aggregate_data
+
+# Training configuration
+ENABLE_TWO_PHASE_TRAINING = False  # Set to True to freeze CNN layers and train LSTM+attention only
+RESUME_LR_REDUCTION_FACTOR = 0.5  # Reduce learning rate by this factor when resuming
 from preprocessing import preprocess_signals, create_subject_wise_splits
 from feature_engineering import (
     extract_physiological_features, standardize_feature_length,
@@ -180,6 +187,32 @@ def main():
     print("\n📋 Model Architecture:")
     phys_informed_model.summary()
     
+    # Check for existing checkpoint and resume training if available
+    checkpoint_path = os.path.join(CHECKPOINT_DIR, 'best_model.h5')
+    is_resuming = False
+    initial_lr = K.get_value(phys_informed_model.optimizer.learning_rate)
+    
+    if os.path.exists(checkpoint_path):
+        print(f"\n🔄 CHECKPOINT FOUND: Resuming training from {checkpoint_path}")
+        try:
+            phys_informed_model.load_weights(checkpoint_path)
+            is_resuming = True
+            
+            # Reduce learning rate for fine-tuning
+            new_lr = initial_lr * RESUME_LR_REDUCTION_FACTOR
+            K.set_value(phys_informed_model.optimizer.learning_rate, new_lr)
+            print(f"   ✅ Weights loaded successfully")
+            print(f"   📉 Learning rate adjusted: {initial_lr:.2e} → {new_lr:.2e} (reduced by {RESUME_LR_REDUCTION_FACTOR}x)")
+        except Exception as e:
+            print(f"   ⚠️  Failed to load checkpoint: {e}")
+            print(f"   🆕 Training from scratch instead")
+            is_resuming = False
+    else:
+        print(f"\n🆕 NO CHECKPOINT FOUND: Training from scratch")
+        print(f"   💾 Model will be saved to: {checkpoint_path}")
+    
+    print(f"   🎯 Current learning rate: {K.get_value(phys_informed_model.optimizer.learning_rate):.2e}")
+    
     # ===== Step 9: Setup Callbacks =====
     print("\n⚙️  STEP 9: Setting up training callbacks...")
     
@@ -207,18 +240,44 @@ def main():
             filepath=os.path.join(CHECKPOINT_DIR, 'best_model.h5'),
             monitor='val_loss',
             save_best_only=True,
+            save_weights_only=False,
             verbose=1
         )
     ]
     
     # ===== Step 10: Train Model =====
+    # Optional: Two-phase training (freeze CNN layers, train LSTM+attention only)
+    if ENABLE_TWO_PHASE_TRAINING and is_resuming:
+        print("\n🔒 TWO-PHASE TRAINING: Freezing CNN layers, training LSTM+attention only...")
+        
+        # Freeze CNN layers
+        for layer in phys_informed_model.layers:
+            if 'conv' in layer.name.lower():
+                layer.trainable = False
+                print(f"   🔒 Frozen: {layer.name}")
+        
+        # Recompile model with frozen layers
+        phys_informed_model.compile(
+            optimizer=phys_informed_model.optimizer,
+            loss={'sbp_output': 'huber', 'dbp_output': 'huber'},
+            metrics={'sbp_output': 'mae', 'dbp_output': 'mae'}
+        )
+        
+        print("   ✅ CNN layers frozen, model recompiled")
+        print(f"   📊 Trainable params: {phys_informed_model.count_params():,}")
+    
     print("\n🏃‍♂️ STEP 10: Training physiology-informed CNN-LSTM model...")
+    print(f"   - Mode: {'RESUMED (fine-tuning)' if is_resuming else 'FRESH START'}")
+    if ENABLE_TWO_PHASE_TRAINING and is_resuming:
+        print(f"   - Two-phase: CNN frozen, LSTM+attention trainable")
     print(f"   - Epochs: {EPOCHS}")
     print(f"   - Batch size: {BATCH_SIZE}")
     print(f"   - Loss: Huber (robust to outliers)")
     print(f"   - Optimizer: Adam with gradient clipping")
     print(f"   - Outputs: SBP and DBP (dual prediction)")
     print(f"   - Callbacks: EarlyStopping, ReduceLROnPlateau, ModelCheckpoint\n")
+    
+    training_start_time = datetime.now()
     
     history = phys_informed_model.fit(
         X_train_phys,
@@ -230,7 +289,11 @@ def main():
         verbose=VERBOSE
     )
     
+    training_end_time = datetime.now()
+    training_duration = (training_end_time - training_start_time).total_seconds()
+    
     print("\n✅ Training completed!")
+    print(f"   ⏱️  Duration: {training_duration:.2f} seconds ({training_duration/60:.2f} minutes)")
     
     # ===== Step 11: Plot Training History =====
     print("\n📈 STEP 11: Plotting training history...")
@@ -345,6 +408,52 @@ def main():
         print(f"   - Improving feature engineering")
     
     print(f"\n💾 Model and results saved to: {CHECKPOINT_DIR}")
+    
+    # ===== Step 15: Save Run Metadata =====
+    print("\n💾 STEP 15: Saving run metadata...")
+    
+    metadata = {
+        'run_timestamp': training_start_time.isoformat(),
+        'training_mode': 'resumed' if is_resuming else 'fresh',
+        'two_phase_training': ENABLE_TWO_PHASE_TRAINING and is_resuming,
+        'initial_learning_rate': float(initial_lr),
+        'final_learning_rate': float(K.get_value(phys_informed_model.optimizer.learning_rate)),
+        'training_duration_seconds': training_duration,
+        'epochs_trained': len(history.history['loss']),
+        'final_metrics': {
+            'validation': {
+                'sbp_mae': float(val_results['metrics']['sbp']['MAE']),
+                'sbp_rmse': float(val_results['metrics']['sbp']['RMSE']),
+                'sbp_r2': float(val_results['metrics']['sbp']['R2']),
+                'dbp_mae': float(val_results['metrics']['dbp']['MAE']),
+                'dbp_rmse': float(val_results['metrics']['dbp']['RMSE']),
+                'dbp_r2': float(val_results['metrics']['dbp']['R2'])
+            },
+            'test': {
+                'sbp_mae': float(test_results['metrics']['sbp']['MAE']),
+                'sbp_rmse': float(test_results['metrics']['sbp']['RMSE']),
+                'sbp_r2': float(test_results['metrics']['sbp']['R2']),
+                'dbp_mae': float(test_results['metrics']['dbp']['MAE']),
+                'dbp_rmse': float(test_results['metrics']['dbp']['RMSE']),
+                'dbp_r2': float(test_results['metrics']['dbp']['R2'])
+            }
+        },
+        'target_achieved': {
+            'sbp': test_results['metrics']['sbp']['MAE'] < 10.0,
+            'dbp': test_results['metrics']['dbp']['MAE'] < 10.0
+        },
+        'config': {
+            'epochs': EPOCHS,
+            'batch_size': BATCH_SIZE,
+            'resume_lr_reduction_factor': RESUME_LR_REDUCTION_FACTOR
+        }
+    }
+    
+    metadata_path = os.path.join(CHECKPOINT_DIR, 'training_metadata.json')
+    with open(metadata_path, 'w') as f:
+        json.dump(metadata, f, indent=2)
+    
+    print(f"   ✅ Metadata saved to: {metadata_path}")
     print("="*70 + "\n")
     
     return phys_informed_model, history, test_results
