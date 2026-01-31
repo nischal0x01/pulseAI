@@ -62,8 +62,8 @@ export function BPPredictor() {
         const model = getModelInstance()
         
         // Extract signal values (take last N samples)
-        const ppgValues = ppgData.slice(-REQUIRED_SAMPLES).map(s => s.value)
-        const ecgValues = ecgData.slice(-REQUIRED_SAMPLES).map(s => s.value)
+        const ppgValues = ppgData.slice(-REQUIRED_SAMPLES).map((s: { value: number }) => s.value)
+        const ecgValues = ecgData.slice(-REQUIRED_SAMPLES).map((s: { value: number }) => s.value)
 
         // Make prediction
         const result = await model.predict(ecgValues, ppgValues)

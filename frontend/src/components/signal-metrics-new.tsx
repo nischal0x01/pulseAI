@@ -9,12 +9,16 @@ import { Activity, Signal, Heart, TrendingUp } from "lucide-react"
 export function SignalMetrics() {
   const { ppgBuffer, ecgBuffer, currentHeartRate, signalQuality } = useSignal()
   const [ppgMetrics, setPpgMetrics] = useState({ 
+    heartRate: 0,
+    signalQuality: 0,
     amplitude: 0, 
     lastRRInterval: 0, 
     estimatedSBP: 0, 
     estimatedDBP: 0 
   })
   const [ecgMetrics, setEcgMetrics] = useState({ 
+    heartRate: 0,
+    signalQuality: 0,
     amplitude: 0, 
     lastRRInterval: 0, 
     estimatedSBP: 0, 

@@ -9,7 +9,8 @@ import { Activity, Signal, Heart, TrendingUp } from "lucide-react"
 export function SignalMetrics() {
   const { ppgBuffer, ecgBuffer, currentHeartRate, signalQuality } = useSignal()
   const [ppgMetrics, setPpgMetrics] = useState({ 
-    amplitude: 0, 
+    heartRate: 0,
+    signalQuality: 0,
     lastRRInterval: 0, 
     estimatedSBP: 0, 
     estimatedDBP: 0 
@@ -74,7 +75,13 @@ export function SignalMetrics() {
       <MetricCard
         icon={TrendingUp}
         label="Pulse Amplitude"
-        value={ppgMetrics.amplitude > 0 ? ppgMetrics.amplitude.toFixed(2) : "--"}
+        value={(() => {
+          const buffer = ppgBuffer.getBuffer()
+          if (buffer.length === 0) return "--"
+          const values = buffer.map(s => s.value)
+          const amplitude = Math.max(...values) - Math.min(...values)
+          return amplitude > 0 ? amplitude.toFixed(2) : "--"
+        })()}
         unit="V"
         color="text-blue-500"
       />
