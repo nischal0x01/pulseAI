@@ -1,7 +1,20 @@
+// Signal processing constants
+const MIN_SAMPLES_FOR_METRICS = 2
+const SIGNAL_QUALITY_VARIANCE_SCALE = 100
+const BP_AMPLITUDE_TO_SBP_SCALE = 5
+const BP_AMPLITUDE_TO_DBP_SCALE = 3
+const BP_BASELINE_SBP = 100
+const BP_BASELINE_DBP = 60
+
 export interface BufferConfig {
   maxSize: number
   samplingRate: number
   windowDuration: number
+}
+
+export interface BufferSample {
+  timestamp: number
+  value: number
 }
 
 export interface SignalMetrics {
@@ -15,7 +28,7 @@ export interface SignalMetrics {
 }
 
 export class SignalBuffer {
-  private buffer: Array<{ timestamp: number; value: number }> = []
+  private buffer: BufferSample[] = []
   private readonly maxSize: number
   private readonly samplingRate: number
   private peaks: number[] = []
@@ -34,11 +47,11 @@ export class SignalBuffer {
     }
   }
 
-  getBuffer(): Array<{ timestamp: number; value: number }> {
+  getBuffer(): BufferSample[] {
     return [...this.buffer]
   }
 
-  getWindowedData(duration: number): Array<{ timestamp: number; value: number }> {
+  getWindowedData(duration: number): BufferSample[] {
     if (this.buffer.length === 0) return []
 
     const now = this.buffer[this.buffer.length - 1].timestamp
@@ -53,7 +66,7 @@ export class SignalBuffer {
   }
 
   calculateMetrics(): SignalMetrics {
-    if (this.buffer.length < 2) {
+    if (this.buffer.length < MIN_SAMPLES_FOR_METRICS) {
       return {
         heartRate: 0,
         signalQuality: 0,
@@ -71,18 +84,18 @@ export class SignalBuffer {
     const values = this.buffer.map((s) => s.value)
     const mean = values.reduce((a, b) => a + b, 0) / values.length
     const variance = values.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / values.length
-    const signalQuality = Math.min(100, (variance / 100) * 100)
+    const signalQuality = Math.min(100, (variance / SIGNAL_QUALITY_VARIANCE_SCALE) * 100)
 
     // --- Estimated BP placeholder logic ---
     // NOTE: This is a stub using simple scaling of the signal.
-    // Replace with  trained model or a proper estimation function.
+    // Replace with trained model or a proper estimation function.
     const max = Math.max(...values)
     const min = Math.min(...values)
     const amplitude = max - min
 
     // Very rough heuristic mapping amplitude -> BP (for demo only)
-    const estimatedSBP = 100 + amplitude * 5
-    const estimatedDBP = 60 + amplitude * 3
+    const estimatedSBP = BP_BASELINE_SBP + amplitude * BP_AMPLITUDE_TO_SBP_SCALE
+    const estimatedDBP = BP_BASELINE_DBP + amplitude * BP_AMPLITUDE_TO_DBP_SCALE
 
     // Last R-R interval
     const lastRRInterval =

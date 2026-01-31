@@ -21,6 +21,17 @@ logger = logging.getLogger(__name__)
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 
+# Signal processing constants
+TARGET_SIGNAL_LENGTH = 875  # Number of samples required for model input
+MIN_SBP = 80  # Minimum valid SBP value (mmHg)
+MAX_SBP = 200  # Maximum valid SBP value (mmHg)
+MIN_DBP = 40  # Minimum valid DBP value (mmHg)
+MAX_DBP = 130  # Maximum valid DBP value (mmHg)
+DEFAULT_PAT_VALUE = 0.2  # Default PAT value when not provided
+DEFAULT_HR_VALUE = 75.0  # Default heart rate (bpm) when not provided
+MIN_HR = 40.0  # Minimum heart rate for normalization (bpm)
+MAX_HR = 200.0  # Maximum heart rate for normalization (bpm)
+
 app = FastAPI(
     title="Blood Pressure Prediction API",
     description="Cuffless blood pressure estimation using CNN-LSTM-Attention model",
@@ -51,10 +62,10 @@ class SignalData(BaseModel):
     class Config:
         json_schema_extra = {
             "example": {
-                "ecg": [0.1, 0.2, 0.15] + [0.0] * 872,  # 875 samples
-                "ppg": [0.5, 0.6, 0.55] + [0.0] * 872,
-                "pat": [0.2] * 875,
-                "hr": [75.0] * 875
+                "ecg": [0.1, 0.2, 0.15] + [0.0] * (TARGET_SIGNAL_LENGTH - 3),
+                "ppg": [0.5, 0.6, 0.55] + [0.0] * (TARGET_SIGNAL_LENGTH - 3),
+                "pat": [DEFAULT_PAT_VALUE] * TARGET_SIGNAL_LENGTH,
+                "hr": [DEFAULT_HR_VALUE] * TARGET_SIGNAL_LENGTH
             }
         }
 
@@ -110,9 +121,9 @@ def preprocess_signals(ecg: List[float], ppg: List[float],
         hr: Heart rate signal (optional, will use default if not provided)
         
     Returns:
-        Preprocessed input tensor of shape (1, 875, 4)
+        Preprocessed input tensor of shape (1, TARGET_SIGNAL_LENGTH, 4)
     """
-    TARGET_LENGTH = 875
+    TARGET_LENGTH = TARGET_SIGNAL_LENGTH
     
     def resample_or_pad(signal: List[float], target_length: int) -> np.ndarray:
         """Resample or pad signal to target length"""
@@ -139,8 +150,8 @@ def preprocess_signals(ecg: List[float], ppg: List[float],
         return (signal - mean) / std
     
     def normalize_hr(signal: np.ndarray) -> np.ndarray:
-        """Normalize heart rate to 0-1 range (40-200 bpm)"""
-        return (signal - 40) / 160
+        """Normalize heart rate to 0-1 range"""
+        return (signal - MIN_HR) / (MAX_HR - MIN_HR)
     
     # Resample/pad all signals
     ecg_processed = resample_or_pad(ecg, TARGET_LENGTH)
@@ -149,13 +160,13 @@ def preprocess_signals(ecg: List[float], ppg: List[float],
     # Handle optional PAT and HR
     if pat is None:
         # Calculate PAT as PPG-ECG delay (simplified)
-        pat_processed = np.full(TARGET_LENGTH, 0.2)  # Default PAT value
+        pat_processed = np.full(TARGET_LENGTH, DEFAULT_PAT_VALUE)
     else:
         pat_processed = resample_or_pad(pat, TARGET_LENGTH)
     
     if hr is None:
         # Use default heart rate
-        hr_processed = np.full(TARGET_LENGTH, 75.0)  # Default HR
+        hr_processed = np.full(TARGET_LENGTH, DEFAULT_HR_VALUE)
     else:
         hr_processed = resample_or_pad(hr, TARGET_LENGTH)
     
@@ -170,6 +181,39 @@ def preprocess_signals(ecg: List[float], ppg: List[float],
     input_tensor = np.expand_dims(input_tensor, axis=0)  # Add batch dimension
     
     return input_tensor
+
+
+def calculate_prediction_confidence(sbp: float, dbp: float) -> float:
+    """
+    Calculate prediction confidence based on physiological validity
+    
+    Args:
+        sbp: Predicted systolic blood pressure
+        dbp: Predicted diastolic blood pressure
+        
+    Returns:
+        Confidence score between 0 and 1
+    """
+    base_confidence = 0.85
+    
+    # Check if SBP > DBP (physiological requirement)
+    if sbp <= dbp:
+        return 0.3  # Low confidence for invalid measurements
+    
+    # Check pulse pressure (SBP - DBP should be 30-60 typically)
+    pulse_pressure = sbp - dbp
+    if pulse_pressure < 20 or pulse_pressure > 100:
+        base_confidence *= 0.7
+    
+    # Check if values are at clamping limits (indicates out-of-range prediction)
+    if sbp == MIN_SBP or sbp == MAX_SBP or dbp == MIN_DBP or dbp == MAX_DBP:
+        base_confidence *= 0.6
+    
+    # Boost confidence for normal ranges (90-120/60-80)
+    if 90 <= sbp <= 120 and 60 <= dbp <= 80:
+        base_confidence = min(1.0, base_confidence * 1.1)
+    
+    return round(base_confidence, 2)
 
 
 @app.on_event("startup")
@@ -253,11 +297,12 @@ async def predict_blood_pressure(data: SignalData):
         dbp = float(predictions[1][0][0])
         
         # Clamp to reasonable ranges
-        sbp = max(80, min(200, sbp))
-        dbp = max(40, min(130, dbp))
+        sbp = max(MIN_SBP, min(MAX_SBP, sbp))
+        dbp = max(MIN_DBP, min(MAX_DBP, dbp))
         
-        # Calculate confidence (simplified - could be enhanced with uncertainty estimation)
-        confidence = 0.85
+        # Calculate confidence based on prediction validity
+        # Higher confidence if values are within normal ranges and physiologically consistent
+        confidence = calculate_prediction_confidence(sbp, dbp)
         
         logger.info(f"Prediction: SBP={sbp:.1f}, DBP={dbp:.1f}")
         

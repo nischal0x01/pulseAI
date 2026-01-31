@@ -8,6 +8,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 
+// Prediction configuration constants
+const REQUIRED_SAMPLES = 875 // Number of samples needed for model input
+const PREDICTION_INTERVAL_MS = 2000 // Update predictions every 2 seconds
+
 export function BPPredictor() {
   const { ppgBuffer, ecgBuffer } = useSignal()
   const [modelLoaded, setModelLoaded] = useState(false)
@@ -38,16 +42,16 @@ export function BPPredictor() {
     if (!modelLoaded) return
 
     const predictInterval = setInterval(async () => {
-      // Get latest signal data (875 samples = 3.5 seconds)
+      // Get latest signal data
       const ppgData = ppgBuffer.getBuffer()
       const ecgData = ecgBuffer.getBuffer()
 
-      // Need minimum 875 samples for prediction
-      if (ppgData.length < 875 || ecgData.length < 875) {
+      // Need minimum samples for prediction
+      if (ppgData.length < REQUIRED_SAMPLES || ecgData.length < REQUIRED_SAMPLES) {
         console.log('Waiting for sufficient data...', {
           ppg: ppgData.length,
           ecg: ecgData.length,
-          required: 875
+          required: REQUIRED_SAMPLES
         })
         return
       }
@@ -57,9 +61,9 @@ export function BPPredictor() {
       try {
         const model = getModelInstance()
         
-        // Extract signal values (take last 875 samples)
-        const ppgValues = ppgData.slice(-875).map(s => s.value)
-        const ecgValues = ecgData.slice(-875).map(s => s.value)
+        // Extract signal values (take last N samples)
+        const ppgValues = ppgData.slice(-REQUIRED_SAMPLES).map(s => s.value)
+        const ecgValues = ecgData.slice(-REQUIRED_SAMPLES).map(s => s.value)
 
         // Make prediction
         const result = await model.predict(ecgValues, ppgValues)
@@ -73,7 +77,7 @@ export function BPPredictor() {
       } finally {
         setIsProcessing(false)
       }
-    }, 2000) // Update every 2 seconds
+    }, PREDICTION_INTERVAL_MS)
 
     return () => clearInterval(predictInterval)
   }, [modelLoaded, ppgBuffer, ecgBuffer])
