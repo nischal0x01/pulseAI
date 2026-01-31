@@ -5,12 +5,13 @@ scikit-learn
 matplotlib
 seaborn
 scipy
-tensorflow==2.10.0
+tensorflow
 jupyter
 ipykernel
-tensorflowjs
 
-# WebSocket server dependencies for development/testing
+# FastAPI backend dependencies
 fastapi
 uvicorn[standard]
-websockets  
+pydantic
+websockets
+python-multipart  

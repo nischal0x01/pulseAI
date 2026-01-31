@@ -15,7 +15,7 @@ tf.random.set_seed(RANDOM_SEED)
 EPOCHS = 100
 BATCH_SIZE = 32
 VERBOSE = 1
-LEARNING_RATE = 1e-4  # Lower learning rate for LSTM stability
+LEARNING_RATE = 1e-3  # Lower learning rate for LSTM stability
 GRADIENT_CLIP_NORM = 1.0  # Gradient clipping for LSTM stability
 
 # Data split configuration
