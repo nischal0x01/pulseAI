@@ -4,7 +4,7 @@ Contains hyperparameters, paths, and training configuration.
 """
 
 import numpy as np
-import tensorflow as tf
+import tensorflow as tf #type:ignore
 
 # Random seeds for reproducibility
 RANDOM_SEED = 42
