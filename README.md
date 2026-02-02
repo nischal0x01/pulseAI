@@ -4,7 +4,19 @@ A machine learning project for estimating blood pressure from PPG (Photoplethysm
 
 ## 🎯 Quick Start - Real-time BP Monitoring
 
-### Option 1: Automated Script (Recommended)
+### Hardware Setup
+
+**Required:**
+- ESP32 development board
+- MAX30102 PPG sensor (pulse oximeter)
+- AD8232 ECG sensor module
+- 3x disposable ECG electrodes
+
+See **[HARDWARE_SETUP.md](HARDWARE_SETUP.md)** for complete wiring guide with diagrams.
+
+### Software Setup
+
+#### Option 1: Automated Script (Recommended)
 
 ```bash
 # Start everything with one command
@@ -117,14 +129,3 @@ The project uses the following data structure:
 - `data/raw/` - Raw dataset files downloaded from PulseDB
 - `data/processed/` - Preprocessed .mat files ready for training
 - `checkpoints/` - Model checkpoints and saved weights
-
-### HPC/SLURM Usage
-
-When running on HPC systems, the code automatically uses the `$SCRATCH` environment variable:
-- Raw data: `$SCRATCH/data/raw/`
-- Processed data: `$SCRATCH/data/processed/`
-- Checkpoints: `$SCRATCH/checkpoints/`
-
-No code changes needed - just set the `$SCRATCH` environment variable and the data loaders will use the correct paths.
-
-See [SLURM_GUIDE.md](SLURM_GUIDE.md) for detailed HPC setup instructions.

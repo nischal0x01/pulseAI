@@ -109,31 +109,35 @@ class BloodPressurePredictor:
         """Downsample signal."""
         return signal[::int(DOWNSAMPLE_FACTOR)]
     
-    def simulate_ecg_from_ppg(self, ppg_signal):
-        """Generate synthetic ECG from PPG."""
-        ecg_sim = np.gradient(ppg_signal)
-        ecg_sim = ecg_sim - np.mean(ecg_sim)
-        if np.std(ecg_sim) > 0:
-            ecg_sim = ecg_sim / np.std(ecg_sim) * 0.5
-        return ecg_sim
-    
-    def preprocess_window(self, ppg_window):
-        """Preprocess PPG window."""
+    def preprocess_window(self, ppg_window, ecg_window):
+        """
+        Preprocess PPG and ECG windows for model input.
+        Returns 4-channel input: [ECG, PPG, PAT, HR]
+        """
+        # Downsample to model's sample rate
         ppg_downsampled = self.downsample(ppg_window)
+        ecg_downsampled = self.downsample(ecg_window)
         
+        # Ensure correct length
         if len(ppg_downsampled) < WINDOW_SIZE:
             padding = WINDOW_SIZE - len(ppg_downsampled)
             ppg_downsampled = np.pad(ppg_downsampled, (0, padding), mode='edge')
         elif len(ppg_downsampled) > WINDOW_SIZE:
             ppg_downsampled = ppg_downsampled[:WINDOW_SIZE]
         
-        ecg_sim = self.simulate_ecg_from_ppg(ppg_downsampled)
+        if len(ecg_downsampled) < WINDOW_SIZE:
+            padding = WINDOW_SIZE - len(ecg_downsampled)
+            ecg_downsampled = np.pad(ecg_downsampled, (0, padding), mode='edge')
+        elif len(ecg_downsampled) > WINDOW_SIZE:
+            ecg_downsampled = ecg_downsampled[:WINDOW_SIZE]
         
+        # Update running stats for normalization
         self.mean = 0.9 * self.mean + 0.1 * np.mean(ppg_downsampled)
         self.std = 0.9 * self.std + 0.1 * (np.std(ppg_downsampled) + 1e-6)
         
+        # Normalize signals
         ppg_norm = (ppg_downsampled - self.mean) / (self.std + 1e-6)
-        ecg_norm = (ecg_sim - np.mean(ecg_sim)) / (np.std(ecg_sim) + 1e-6)
+        ecg_norm = (ecg_downsampled - np.mean(ecg_downsampled)) / (np.std(ecg_downsampled) + 1e-6)
         
         signals = np.stack([ppg_norm, ecg_norm], axis=0)
         signals = signals[np.newaxis, :, :]
@@ -159,13 +163,16 @@ class BloodPressurePredictor:
             ecg_ch = ecg_norm.reshape(1, WINDOW_SIZE, 1)
             return np.concatenate([ecg_ch, ppg_ch, zeros, zeros], axis=2)
     
-    def predict(self, ppg_window):
-        """Predict BP."""
+    def predict(self, ppg_window, ecg_window):
+        """
+        Predict BP from PPG and ECG windows.
+        Returns: (sbp, dbp) tuple
+        """
         if self.model is None:
             return None, None
         
         try:
-            input_data = self.preprocess_window(ppg_window)
+            input_data = self.preprocess_window(ppg_window, ecg_window)
             predictions = self.model.predict(input_data, verbose=0)
             
             if predictions.shape[1] == 2:
@@ -216,7 +223,7 @@ class ConnectionManager:
 
 
 class SerialReader:
-    """Reads PPG data from ESP32 in background thread."""
+    """Reads PPG and ECG data from ESP32 in background thread."""
     
     def __init__(self, port, baudrate, data_queue):
         self.port = port
@@ -251,14 +258,16 @@ class SerialReader:
                         continue
                     
                     parts = line.split(',')
-                    if len(parts) != 3:
+                    if len(parts) != 5:  # timestamp,ppg_raw,ppg_filtered,ecg_raw,ecg_filtered
                         continue
                     
-                    timestamp, ir_raw, filtered = parts
+                    timestamp, ppg_raw, ppg_filtered, ecg_raw, ecg_filtered = parts
                     data = {
                         'timestamp': timestamp,
-                        'ir_raw': float(ir_raw),
-                        'filtered': float(filtered)
+                        'ppg_raw': float(ppg_raw),
+                        'ppg_filtered': float(ppg_filtered),
+                        'ecg_raw': float(ecg_raw),
+                        'ecg_filtered': float(ecg_filtered)
                     }
                     
                     self.data_queue.put(data)
@@ -277,6 +286,7 @@ class SerialReader:
 manager = ConnectionManager()
 predictor = None
 ppg_buffer = deque(maxlen=BUFFER_SIZE)
+ecg_buffer = deque(maxlen=BUFFER_SIZE)
 sample_count = 0
 prediction_count = 0
 data_queue = queue.Queue()
@@ -309,27 +319,31 @@ async def broadcast_loop():
                 await asyncio.sleep(0.01)
                 continue
             
-            filtered_value = data['filtered']
-            ppg_buffer.append(filtered_value)
+            ppg_filtered = data['ppg_filtered']
+            ecg_filtered = data['ecg_filtered']
+            
+            ppg_buffer.append(ppg_filtered)
+            ecg_buffer.append(ecg_filtered)
             sample_count += 1
             
-            # Broadcast PPG signal
+            # Broadcast PPG and ECG signals
             await manager.broadcast({
                 'type': 'signal_data',
                 'payload': {
                     'timestamp': int(time.time() * 1000),
-                    'ppg_value': filtered_value,
-                    'ecg_value': 0.0,  # Placeholder
+                    'ppg_value': ppg_filtered,
+                    'ecg_value': ecg_filtered,
                     'sample_rate': PPG_SAMPLE_RATE,
                     'quality': 0.85
                 }
             })
             
             # Make prediction
-            if len(ppg_buffer) >= BUFFER_SIZE and sample_count % UPDATE_INTERVAL == 0:
+            if len(ppg_buffer) >= BUFFER_SIZE and len(ecg_buffer) >= BUFFER_SIZE and sample_count % UPDATE_INTERVAL == 0:
                 if predictor and predictor.model:
                     ppg_window = np.array(list(ppg_buffer))
-                    sbp, dbp = predictor.predict(ppg_window)
+                    ecg_window = np.array(list(ecg_buffer))
+                    sbp, dbp = predictor.predict(ppg_window, ecg_window)
                     
                     if sbp is not None and dbp is not None:
                         prediction_count += 1

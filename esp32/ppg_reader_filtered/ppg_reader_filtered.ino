@@ -1,11 +1,15 @@
 /*
- * ESP32 PPG Reader with On-Device Filtering
+ * ESP32 PPG + ECG Reader with On-Device Filtering
  * 
- * This sketch reads PPG data from MAX30102 sensor and applies:
- * - DC component removal
- * - Bandpass filtering (0.7-4 Hz)
+ * This sketch reads:
+ * - PPG data from MAX30102 sensor
+ * - ECG data from AD8232 sensor
  * 
- * Output format: timestamp,ir_raw,filtered_value
+ * Filtering applied:
+ * - PPG: DC removal + Bandpass (0.7-4 Hz)
+ * - ECG: Bandpass (0.5-40 Hz)
+ * 
+ * Output format: timestamp,ppg_raw,ppg_filtered,ecg_raw,ecg_filtered
  */
 
 #include <Wire.h>
@@ -13,20 +17,34 @@
 
 MAX30105 particleSensor;
 
+// AD8232 ECG sensor pins
+const int ECG_PIN = 34;           // Analog input pin for ECG signal
+const int LO_PLUS_PIN = 32;       // Leads-off detection LO+
+const int LO_MINUS_PIN = 33;      // Leads-off detection LO-
+
 // Filter parameters
 const int FILTER_ORDER = 3;
 const float DC_ALPHA = 0.01;
 const float SAMPLE_RATE = 200.0;
 
-// Bandpass filter coefficients for 0.7-4 Hz at 200 Hz sampling rate
+// PPG Bandpass filter coefficients for 0.7-4 Hz at 200 Hz sampling rate
 // Generated using scipy.signal.butter(3, [0.7, 4], 'band', fs=200)
-const float b_coeff[7] = {0.00048429, 0.0, -0.00145287, 0.0, 0.00145287, 0.0, -0.00048429};
-const float a_coeff[7] = {1.0, -5.73472347, 13.79441094, -17.56330439, 12.59909153, -4.77994664, 0.77398774};
+const float ppg_b_coeff[7] = {0.00048429, 0.0, -0.00145287, 0.0, 0.00145287, 0.0, -0.00048429};
+const float ppg_a_coeff[7] = {1.0, -5.73472347, 13.79441094, -17.56330439, 12.59909153, -4.77994664, 0.77398774};
 
-// Filter state variables
-float x_buffer[7] = {0}; // Input history
-float y_buffer[7] = {0}; // Output history
-float dc_estimate = 0.0;
+// ECG Bandpass filter coefficients for 0.5-40 Hz at 200 Hz sampling rate
+// Generated using scipy.signal.butter(3, [0.5, 40], 'band', fs=200)
+const float ecg_b_coeff[7] = {0.11957729, 0.0, -0.35873187, 0.0, 0.35873187, 0.0, -0.11957729};
+const float ecg_a_coeff[7] = {1.0, -2.37409474, 3.32826312, -2.98588214, 1.81104923, -0.60619881, 0.10359967};
+
+// PPG Filter state variables
+float ppg_x_buffer[7] = {0};
+float ppg_y_buffer[7] = {0};
+float ppg_dc_estimate = 0.0;
+
+// ECG Filter state variables
+float ecg_x_buffer[7] = {0};
+float ecg_y_buffer[7] = {0};
 
 void setup() {
   Serial.begin(115200);
@@ -50,40 +68,71 @@ void setup() {
   particleSensor.setPulseAmplitudeRed(0x0A);
   particleSensor.setPulseAmplitudeIR(0x0A);
 
-  Serial.println("Sensor initialized. Starting data stream...");
-  Serial.println("Format: timestamp,ir_raw,filtered_value");
+  // Configure AD8232 pins
+  pinMode(ECG_PIN, INPUT);
+  pinMode(LO_PLUS_PIN, INPUT);
+  pinMode(LO_MINUS_PIN, INPUT);
+
+  Serial.println("Sensors initialized. Starting data stream...");
+  Serial.println("Format: timestamp,ppg_raw,ppg_filtered,ecg_raw,ecg_filtered");
 }
 
-float applyBandpassFilter(float input) {
+float applyPPGBandpassFilter(float input) {
   // Shift buffers (move history)
   for (int i = 6; i > 0; i--) {
-    x_buffer[i] = x_buffer[i-1];
-    y_buffer[i] = y_buffer[i-1];
+    ppg_x_buffer[i] = ppg_x_buffer[i-1];
+    ppg_y_buffer[i] = ppg_y_buffer[i-1];
   }
   
-  x_buffer[0] = input;
+  ppg_x_buffer[0] = input;
   
   // Apply IIR filter (Direct Form II Transposed)
   float y = 0.0;
   
   // Apply numerator (b coefficients)
   for (int i = 0; i < 7; i++) {
-    y += b_coeff[i] * x_buffer[i];
+    y += ppg_b_coeff[i] * ppg_x_buffer[i];
   }
   
   // Apply denominator (a coefficients, excluding a[0] which is 1.0)
   for (int i = 1; i < 7; i++) {
-    y -= a_coeff[i] * y_buffer[i];
+    y -= ppg_a_coeff[i] * ppg_y_buffer[i];
   }
   
-  y_buffer[0] = y;
+  ppg_y_buffer[0] = y;
+  return y;
+}
+
+float applyECGBandpassFilter(float input) {
+  // Shift buffers (move history)
+  for (int i = 6; i > 0; i--) {
+    ecg_x_buffer[i] = ecg_x_buffer[i-1];
+    ecg_y_buffer[i] = ecg_y_buffer[i-1];
+  }
+  
+  ecg_x_buffer[0] = input;
+  
+  // Apply IIR filter (Direct Form II Transposed)
+  float y = 0.0;
+  
+  // Apply numerator (b coefficients)
+  for (int i = 0; i < 7; i++) {
+    y += ecg_b_coeff[i] * ecg_x_buffer[i];
+  }
+  
+  // Apply denominator (a coefficients, excluding a[0] which is 1.0)
+  for (int i = 1; i < 7; i++) {
+    y -= ecg_a_coeff[i] * ecg_y_buffer[i];
+  }
+  
+  ecg_y_buffer[0] = y;
   return y;
 }
 
 void loop() {
   uint32_t ir, red;
   
-  // Read sensor data
+  // Read PPG sensor data
   particleSensor.check();
   
   if (particleSensor.available()) {
@@ -91,18 +140,39 @@ void loop() {
     red = particleSensor.getRed();
     particleSensor.nextSample();
     
-    // DC component removal (high-pass filter using exponential moving average)
-    dc_estimate += DC_ALPHA * ((float)ir - dc_estimate);
-    float ac_component = (float)ir - dc_estimate;
+    // Check ECG leads-off detection
+    bool ecg_valid = (digitalRead(LO_PLUS_PIN) == 0) && (digitalRead(LO_MINUS_PIN) == 0);
     
-    // Apply bandpass filter
-    float filtered_value = applyBandpassFilter(ac_component);
+    // Read ECG data
+    int ecg_raw = 0;
+    float ecg_filtered = 0.0;
     
-    // Send: timestamp,ir_raw,filtered_value
+    if (ecg_valid) {
+      ecg_raw = analogRead(ECG_PIN);
+      
+      // Normalize ECG to -1 to 1 range (assuming 12-bit ADC)
+      float ecg_normalized = (ecg_raw - 2048.0) / 2048.0;
+      
+      // Apply ECG bandpass filter
+      ecg_filtered = applyECGBandpassFilter(ecg_normalized);
+    }
+    
+    // Process PPG with DC component removal
+    ppg_dc_estimate += DC_ALPHA * ((float)ir - ppg_dc_estimate);
+    float ppg_ac_component = (float)ir - ppg_dc_estimate;
+    
+    // Apply PPG bandpass filter
+    float ppg_filtered = applyPPGBandpassFilter(ppg_ac_component);
+    
+    // Send: timestamp,ppg_raw,ppg_filtered,ecg_raw,ecg_filtered
     Serial.print(millis());
     Serial.print(",");
     Serial.print(ir);
     Serial.print(",");
-    Serial.println(filtered_value, 6);
+    Serial.print(ppg_filtered, 6);
+    Serial.print(",");
+    Serial.print(ecg_raw);
+    Serial.print(",");
+    Serial.println(ecg_filtered, 6);
   }
 }

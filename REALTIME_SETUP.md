@@ -42,8 +42,9 @@ Frontend runs on `http://localhost:3000`
 
 ```
 ┌──────────────┐
-│   ESP32      │  Filters PPG (DC removal + bandpass)
-│  MAX30102    │  Sends: timestamp,ir_raw,filtered_value
+│   ESP32      │  Filters PPG (DC + bandpass) and ECG (bandpass)
+│  MAX30102    │  Sends: timestamp,ppg_raw,ppg_filtered,ecg_raw,ecg_filtered
+│  AD8232      │
 └──────┬───────┘
        │ Serial (USB)
        │ 115200 baud
@@ -51,7 +52,7 @@ Frontend runs on `http://localhost:3000`
 ┌──────────────────────────────────────┐
 │   bridge_server.py (Python)          │
 │                                      │
-│  • Reads filtered PPG from serial   │
+│  • Reads filtered PPG & ECG         │
 │  • Buffers 7 seconds of data        │
 │  • Extracts PAT, HR features        │
 │  • Runs CNN-LSTM model              │
