@@ -9,6 +9,9 @@ tensorflow
 jupyter
 ipykernel
 
+# Serial communication for ESP32
+pyserial
+
 # FastAPI backend dependencies
 fastapi
 uvicorn[standard]

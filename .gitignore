@@ -1,6 +1,7 @@
 .venv
 data/
 checkpoints/
+node_modules/
 
 __pycache__/
 *.pyc
@@ -21,3 +22,9 @@ temp/
 *.bak
 *.old
 *.tmp
+
+# PPG data files
+*.csv
+scripts/*.csv
+ppg_stream.csv
+bp_predictions.csv

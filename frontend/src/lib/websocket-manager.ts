@@ -18,6 +18,17 @@ export interface SignalPacket {
   }
 }
 
+export interface BPPrediction {
+  type: "bp_prediction"
+  payload: {
+    sbp: number
+    dbp: number
+    timestamp: number
+    confidence: number
+    prediction_count: number
+  }
+}
+
 export interface StatusMessage {
   type: "status"
   message: string
@@ -30,12 +41,13 @@ export interface ControlCommand {
   parameters?: Record<string, unknown>
 }
 
-export type WebSocketMessage = SignalPacket | StatusMessage
+export type WebSocketMessage = SignalPacket | BPPrediction | StatusMessage
 
 export type ConnectionStatus = "connecting" | "connected" | "disconnected" | "error"
 
 type SignalCallback = (data: SignalData) => void
 type StatusCallback = (status: ConnectionStatus) => void
+type BPCallback = (prediction: BPPrediction['payload']) => void
 
 // WebSocket configuration constants
 const MAX_RECONNECT_ATTEMPTS = 5
@@ -57,6 +69,7 @@ export class WebSocketManager {
 
   private signalCallbacks: SignalCallback[] = []
   private statusCallbacks: StatusCallback[] = []
+  private bpCallbacks: BPCallback[] = []
 
   constructor(private url: string) {}
 
@@ -111,6 +124,9 @@ export class WebSocketManager {
           // Handle different message types
           if (message.type === "signal_data") {
             this.handleSignalPacket(message)
+            this.lastHeartbeat = Date.now()
+          } else if (message.type === "bp_prediction") {
+            this.handleBPPrediction(message)
             this.lastHeartbeat = Date.now()
           } else if (message.type === "status") {
             console.log("[v0] Status message:", message.message)
@@ -208,6 +224,13 @@ export class WebSocketManager {
     }
   }
 
+  onBPPrediction(callback: BPCallback): () => void {
+    this.bpCallbacks.push(callback)
+    return () => {
+      this.bpCallbacks = this.bpCallbacks.filter((cb) => cb !== callback)
+    }
+  }
+
   private handleSignalPacket(packet: SignalPacket): void {
     if (!packet.payload) {
       console.warn("[v0] Signal packet missing payload:", packet)
@@ -237,6 +260,16 @@ export class WebSocketManager {
 
   private emitSignal(data: SignalData): void {
     this.signalCallbacks.forEach((callback) => callback(data))
+  }
+
+  private handleBPPrediction(prediction: BPPrediction): void {
+    if (!prediction.payload) {
+      console.warn("[v0] BP prediction missing payload:", prediction)
+      return
+    }
+    
+    console.log("[v0] BP Prediction received:", prediction.payload)
+    this.bpCallbacks.forEach((callback) => callback(prediction.payload))
   }
 
   private updateStatus(status: ConnectionStatus): void {
