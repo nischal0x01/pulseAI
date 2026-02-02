@@ -25,6 +25,7 @@ import queue
 
 import serial
 import numpy as np
+from scipy.signal import butter, lfilter, lfilter_zi
 
 # Add model directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src', 'models'))
@@ -222,8 +223,66 @@ class ConnectionManager:
             self.disconnect(connection)
 
 
+class SignalFilter:
+    """Applies bandpass filtering to PPG or ECG signals using scipy.signal."""
+    
+    def __init__(self, signal_type='ppg'):
+        """
+        Initialize filter.
+        
+        Args:
+            signal_type: 'ppg' or 'ecg'
+        """
+        self.signal_type = signal_type
+        self.dc_est = 0.0
+        self.DC_ALPHA = 0.01
+        self.initialized = False
+        
+        # Design filter coefficients
+        if signal_type == 'ppg':
+            # PPG: 0.7-4 Hz bandpass at 200 Hz sampling
+            self.b, self.a = butter(N=3, Wn=[0.7, 4], btype='band', fs=200)
+        else:  # ecg
+            # ECG: 0.5-40 Hz bandpass at 200 Hz sampling
+            self.b, self.a = butter(N=3, Wn=[0.5, 40], btype='band', fs=200)
+        
+        self.zi = None
+    
+    def filter(self, raw_value):
+        """
+        Apply filtering to raw signal value.
+        
+        Args:
+            raw_value: Raw sensor reading
+            
+        Returns:
+            Filtered value
+        """
+        if self.signal_type == 'ppg':
+            # PPG: Apply DC removal first
+            if not self.initialized:
+                self.dc_est = raw_value
+                self.initialized = True
+            
+            self.dc_est += self.DC_ALPHA * (raw_value - self.dc_est)
+            ac_component = raw_value - self.dc_est
+            input_val = ac_component
+        else:
+            # ECG: Normalize to -1 to 1 range (12-bit ADC: 0-4095)
+            input_val = (raw_value - 2048.0) / 2048.0
+        
+        # Initialize filter state on first call
+        if self.zi is None:
+            self.zi = lfilter_zi(self.b, self.a) * input_val
+        
+        # Apply bandpass filter
+        filtered_sample, self.zi = lfilter(self.b, self.a, [input_val], zi=self.zi)
+        
+        return filtered_sample[0]
+
+
 class SerialReader:
-    """Reads PPG and ECG data from ESP32 in background thread."""
+    """Reads PPG and ECG data from ESP32 and applies filtering."""
     
     def __init__(self, port, baudrate, data_queue):
         self.port = port
@@ -231,6 +290,10 @@ class SerialReader:
         self.data_queue = data_queue
         self.running = False
         self.thread = None
+        
+        # Initialize filters
+        self.ppg_filter = SignalFilter('ppg')
+        self.ecg_filter = SignalFilter('ecg')
     
     def start(self):
         """Start reading from serial port."""
@@ -257,17 +320,35 @@ class SerialReader:
                     if not line or ',' not in line:
                         continue
                     
+                    # Log first few lines for debugging
+                    if hasattr(self, '_line_count'):
+                        self._line_count += 1
+                    else:
+                        self._line_count = 1
+                    
+                    if self._line_count <= 5:
+                        logger.info(f"Serial data received: {line}")
+                    
                     parts = line.split(',')
-                    if len(parts) != 5:  # timestamp,ppg_raw,ppg_filtered,ecg_raw,ecg_filtered
+                    if len(parts) != 3:  # timestamp,ppg_raw,ecg_raw
+                        if self._line_count <= 5:
+                            logger.warning(f"Expected 3 fields, got {len(parts)}: {line}")
                         continue
                     
-                    timestamp, ppg_raw, ppg_filtered, ecg_raw, ecg_filtered = parts
+                    timestamp, ppg_raw, ecg_raw = parts
+                    ppg_raw = float(ppg_raw)
+                    ecg_raw = float(ecg_raw)
+                    
+                    # Apply filtering
+                    ppg_filtered = self.ppg_filter.filter(ppg_raw)
+                    ecg_filtered = self.ecg_filter.filter(ecg_raw) if ecg_raw > 0 else 0.0
+                    
                     data = {
                         'timestamp': timestamp,
-                        'ppg_raw': float(ppg_raw),
-                        'ppg_filtered': float(ppg_filtered),
-                        'ecg_raw': float(ecg_raw),
-                        'ecg_filtered': float(ecg_filtered)
+                        'ppg_raw': ppg_raw,
+                        'ppg_filtered': ppg_filtered,
+                        'ecg_raw': ecg_raw,
+                        'ecg_filtered': ecg_filtered
                     }
                     
                     self.data_queue.put(data)
@@ -278,6 +359,25 @@ class SerialReader:
             ser.close()
             logger.info("Serial connection closed")
             
+        except serial.SerialException as e:
+            if "Permission denied" in str(e):
+                logger.error(f"Permission denied: {self.port}")
+                logger.error("=" * 60)
+                logger.error("FIX: Add your user to the serial port group")
+                logger.error("")
+                logger.error("For Arch Linux / Manjaro:")
+                logger.error(f"  sudo usermod -a -G uucp $USER")
+                logger.error("")
+                logger.error("For Debian / Ubuntu:")
+                logger.error(f"  sudo usermod -a -G dialout $USER")
+                logger.error("")
+                logger.error("Alternative (temporary, current session only):")
+                logger.error(f"  sudo chmod 666 {self.port}")
+                logger.error("")
+                logger.error("After adding to group, log out and log back in!")
+                logger.error("=" * 60)
+            else:
+                logger.error(f"Serial error: {e}")
         except Exception as e:
             logger.error(f"Serial error: {e}")
 
@@ -310,11 +410,18 @@ async def broadcast_loop():
     """Process serial data and broadcast to clients."""
     global sample_count, prediction_count
     
+    logger.info("Broadcast loop started, waiting for serial data...")
+    broadcast_count = 0
+    
     while True:
         try:
             # Get data from queue (non-blocking)
             try:
                 data = data_queue.get_nowait()
+                broadcast_count += 1
+                
+                if broadcast_count <= 5:
+                    logger.info(f"Broadcasting data #{broadcast_count}: PPG={data['ppg_filtered']:.3f}, ECG={data['ecg_filtered']:.3f}")
             except queue.Empty:
                 await asyncio.sleep(0.01)
                 continue
