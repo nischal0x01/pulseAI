@@ -12,6 +12,14 @@ const BUFFER_WINDOW_DURATION_MS = 10000 // 10 seconds
 const PPG_BUFFER_SIZE = 2500 // 10 seconds at 250Hz
 const ECG_BUFFER_SIZE = 5000 // 10 seconds at 500Hz
 
+export interface BPPredictionData {
+  sbp: number
+  dbp: number
+  timestamp: number
+  confidence: number
+  prediction_count: number
+}
+
 interface SignalContextType {
   connectionStatus: ConnectionStatus
   connectionError: string | null
@@ -21,6 +29,7 @@ interface SignalContextType {
   currentHeartRate: number
   signalQuality: number
   esp32Ip: string
+  latestBP: BPPredictionData | null
   connect: () => void
   disconnect: () => void
   startAcquisition: () => void
@@ -47,6 +56,7 @@ export function SignalProvider({ children }: { children: React.ReactNode }) {
   const [isAcquiring, setIsAcquiring] = useState(false)
   const [currentHeartRate, setCurrentHeartRate] = useState(0)
   const [signalQuality, setSignalQuality] = useState(0)
+  const [latestBP, setLatestBP] = useState<BPPredictionData | null>(null)
   const [wsManager, setWsManager] = useState<WebSocketManager | null>(null)
 
   // Initialize buffers
@@ -104,11 +114,17 @@ For production: Check the ESP32 device connection and IP address.`)
       }
     })
 
+    const unsubBP = wsManager.onBPPrediction((prediction) => {
+      console.log("BP Prediction received in context:", prediction)
+      setLatestBP(prediction)
+    })
+
     return () => {
       unsubSignal()
       unsubStatus()
+      unsubBP()
     }
-  }, [wsManager, ppgBuffer, ecgBuffer])
+  }, [wsManager, ppgBuffer, ecgBuffer, esp32Ip])
 
   // Update metrics periodically
   useEffect(() => {
@@ -159,6 +175,7 @@ For production: Check the ESP32 device connection and IP address.`)
         currentHeartRate,
         signalQuality,
         esp32Ip,
+        latestBP,
         connect,
         disconnect,
         startAcquisition,

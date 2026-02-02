@@ -1,6 +1,44 @@
 # Cuffless Blood Pressure Estimation
 
-A machine learning project for estimating blood pressure from PPG (Photoplethysmography) and ECG (Electrocardiography) signals using deep learning techniques. This project implements CNN-based feature extraction combined with various regression models for non-invasive blood pressure prediction.
+A machine learning project for estimating blood pressure from PPG (Photoplethysmography) and ECG (Electrocardiography) signals using deep learning techniques. This project implements CNN-LSTM architecture with attention mechanisms for non-invasive blood pressure prediction.
+
+## 🎯 Quick Start - Real-time BP Monitoring
+
+### Option 1: Automated Script (Recommended)
+
+```bash
+# Start everything with one command
+./bash/start-realtime-bp.sh
+
+# Or with custom serial port
+./bash/start-realtime-bp.sh /dev/ttyACM0
+```
+
+Then open `http://localhost:3000` in your browser.
+
+### Option 2: Manual Setup
+
+**Hardware Setup:**
+1. **ESP32 + MAX30102** - See [esp32/README.md](esp32/README.md)
+2. Upload the filtered PPG sketch to ESP32
+3. Connect MAX30102 sensor and place finger on it
+
+**Software:**
+```bash
+# 1. Start the bridge server (connects ESP32 → Model → Frontend)
+python bridge_server.py --serial-port /dev/ttyUSB0
+
+# 2. In another terminal, start frontend
+cd frontend
+pnpm dev
+
+# 3. Open browser
+open http://localhost:3000
+```
+
+See [REALTIME_SETUP.md](REALTIME_SETUP.md) for complete setup guide.
+
+---
 
 ## 🚀 Development Setup
 
