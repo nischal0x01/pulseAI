@@ -32,6 +32,20 @@ from data_loader import load_aggregate_data
 # Training configuration
 ENABLE_TWO_PHASE_TRAINING = False  # Set to True to freeze CNN layers and train LSTM+attention only
 RESUME_LR_REDUCTION_FACTOR = 0.5  # Reduce learning rate by this factor when resuming
+
+# Data augmentation configuration
+ENABLE_AUGMENTATION = True  # Enable augmentation for high BP samples
+AUGMENTATION_FACTOR = 2.0  # Target 2x representation for high BP samples
+BP_THRESHOLD = 140  # SBP threshold to define "high BP" for augmentation
+AUGMENTATION_CONFIG = {
+    'time_warp': True,
+    'amplitude_scale': True,
+    'add_noise': True,
+    'warp_factor': 0.1,  # ±10% temporal stretch
+    'scale_factor': 0.05,  # ±5% amplitude variation
+    'snr_range': (20, 30)  # SNR 20-30 dB for noise injection
+}
+
 from preprocessing import (
     preprocess_signals, create_subject_wise_splits,
     compute_sbp_baselines, compute_dbp_baselines,
@@ -41,6 +55,7 @@ from feature_engineering import (
     extract_physiological_features, standardize_feature_length,
     create_4_channel_input, normalize_pat_subject_wise
 )
+from augmentation import augment_high_bp_samples
 from model_builder_attention import (
     create_phys_informed_model,
     create_attention_visualization_model
@@ -111,7 +126,31 @@ def main():
     ppg_raw = signals_agg[:, 0, :]
     ecg_raw = signals_agg[:, 1, :]
     
-    pat_seqs, hr_seqs, peak_indices = extract_physiological_features(ecg_raw, ppg_raw)
+    # Extract features with quality mask
+    pat_seqs, hr_seqs, quality_mask = extract_physiological_features(ecg_raw, ppg_raw)
+    
+    # Filter out low-quality samples
+    n_low_quality = (~quality_mask).sum()
+    if n_low_quality > 0:
+        print(f"   ⚠️  Filtering {n_low_quality} low-quality windows ({100*n_low_quality/len(quality_mask):.1f}%)...")
+        
+        # Apply quality mask to all data
+        signals_agg = signals_agg[quality_mask]
+        processed_signals = processed_signals[quality_mask]
+        pat_seqs = pat_seqs[quality_mask]
+        hr_seqs = hr_seqs[quality_mask]
+        y_sbp = y_sbp[quality_mask]
+        y_dbp = y_dbp[quality_mask]
+        patient_ids_agg = patient_ids_agg[quality_mask]
+        
+        # Update split masks to match filtered data
+        train_mask = train_mask[quality_mask]
+        val_mask = val_mask[quality_mask]
+        test_mask = test_mask[quality_mask]
+        
+        print(f"   ✅ Kept {quality_mask.sum()} high-quality samples")
+    else:
+        print(f"   ✅ All {len(quality_mask)} samples have good signal quality")
     
     # Standardize length to match processed_signals
     target_len = processed_signals.shape[1]
@@ -182,6 +221,37 @@ def main():
     y_val_dbp = y_dbp_absolute[val_mask]
     y_test_sbp = y_sbp_absolute[test_mask]
     y_test_dbp = y_dbp_absolute[test_mask]
+    
+    # ===== Step 6.6: Data Augmentation for High BP Samples =====
+    if ENABLE_AUGMENTATION:
+        print(f"\n🔄 STEP 6.6: Augmenting high BP samples (SBP > {BP_THRESHOLD} mmHg)...")
+        print(f"   - Augmentation factor: {AUGMENTATION_FACTOR}x")
+        print(f"   - Techniques: time warp (±{AUGMENTATION_CONFIG['warp_factor']*100:.0f}%), "
+              f"amplitude scale (±{AUGMENTATION_CONFIG['scale_factor']*100:.0f}%), "
+              f"noise (SNR {AUGMENTATION_CONFIG['snr_range'][0]}-{AUGMENTATION_CONFIG['snr_range'][1]} dB)")
+        
+        # Count high BP samples before augmentation
+        n_high_bp_before = (y_train_sbp > BP_THRESHOLD).sum()
+        n_total_before = len(y_train_sbp)
+        print(f"   - Training set before augmentation: {n_high_bp_before}/{n_total_before} "
+              f"({100*n_high_bp_before/n_total_before:.1f}%) high BP samples")
+        
+        # Augment training data only (not validation or test)
+        X_train_phys, y_train_sbp, y_train_dbp = augment_high_bp_samples(
+            X_train_phys, y_train_sbp, y_train_dbp,
+            augmentation_factor=AUGMENTATION_FACTOR,
+            bp_threshold=BP_THRESHOLD,
+            augmentation_config=AUGMENTATION_CONFIG
+        )
+        
+        # Report results
+        n_high_bp_after = (y_train_sbp > BP_THRESHOLD).sum()
+        n_total_after = len(y_train_sbp)
+        print(f"   - Training set after augmentation: {n_high_bp_after}/{n_total_after} "
+              f"({100*n_high_bp_after/n_total_after:.1f}%) high BP samples")
+        print(f"   ✅ Augmentation complete: {n_total_before} → {n_total_after} training samples")
+    else:
+        print("\n⏭️  STEP 6.6: Data augmentation disabled")
     
     # Store patient IDs for reconstruction
     train_patient_ids = patient_ids_agg[train_mask]

@@ -4,7 +4,7 @@ Verify training callbacks configuration in train_attention.py
 import os
 import re
 
-train_script = 'src/models/train_attention.py'
+train_script = '../src/models/train_attention.py'
 
 if not os.path.exists(train_script):
     print(f"❌ {train_script} not found!")

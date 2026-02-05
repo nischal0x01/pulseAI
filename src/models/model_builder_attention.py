@@ -19,7 +19,7 @@ from tensorflow.keras.layers import (
 )
 from tensorflow.keras.regularizers import l2
 from tensorflow.keras.optimizers import Adam
-from tensorflow.keras.losses import Huber
+from tensorflow.keras.losses import Huber, Loss
 import tensorflow.keras.backend as K
 
 try:
@@ -37,8 +37,93 @@ except ImportError:
         DENSE_UNITS, DROPOUT_RATE
     )
 
-# L2 Regularization strength
-L2_REG = 0.001  # Prevents overfitting by penalizing large weights
+# L2 Regularization strength (increased to prevent test set overfitting)
+L2_REG = 0.01  # Stronger regularization: prevents overfitting by penalizing large weights
+
+
+class WeightedHuberLoss(Loss):
+    """
+    Huber loss with BP-dependent sample weighting.
+    
+    Penalizes errors on extreme BP values more heavily than normal BP.
+    This addresses data imbalance where 76.8% of training samples are
+    normal BP (90-140 mmHg), causing the model to learn mean prediction.
+    
+    Weighting strategy:
+    - Normal BP (90-140): weight = 1.0 (baseline)
+    - High BP (>140): weight increases linearly up to 3.0
+    - Low BP (<90): weight increases linearly up to 2.0
+    
+    This encourages the model to fit extreme values better.
+    """
+    
+    def __init__(self, delta=1.0, normal_bp_range=(90, 140), high_weight=3.0, low_weight=2.0, name='weighted_huber_loss'):
+        """
+        Args:
+            delta: Huber loss delta parameter (threshold for quadratic vs linear)
+            normal_bp_range: Tuple (low, high) defining normal BP range in mmHg
+            high_weight: Maximum weight for high BP values (>normal_bp_range[1])
+            low_weight: Maximum weight for low BP values (<normal_bp_range[0])
+            name: Loss function name
+        """
+        super().__init__(name=name)
+        self.delta = delta
+        self.normal_low = tf.constant(normal_bp_range[0], dtype=tf.float32)
+        self.normal_high = tf.constant(normal_bp_range[1], dtype=tf.float32)
+        self.high_weight = tf.constant(high_weight, dtype=tf.float32)
+        self.low_weight = tf.constant(low_weight, dtype=tf.float32)
+        self.huber = Huber(delta=delta, reduction='none')  # Disable automatic reduction
+    
+    def call(self, y_true, y_pred):
+        """
+        Compute weighted Huber loss.
+        
+        Args:
+            y_true: True BP values, shape (batch_size,)
+            y_pred: Predicted BP values, shape (batch_size,)
+        
+        Returns:
+            Weighted loss scalar
+        """
+        # Compute base Huber loss per sample (no reduction)
+        huber_loss = self.huber(y_true, y_pred)
+        
+        # Calculate sample weights based on BP value
+        # Weight = 1.0 for normal BP, increases for extreme values
+        
+        # High BP: weight increases linearly from 1.0 to high_weight
+        # Formula: 1.0 + (high_weight - 1.0) * (bp - normal_high) / 60
+        # At BP=140: weight=1.0, at BP=200: weight=high_weight
+        high_bp_excess = tf.maximum(y_true - self.normal_high, 0.0)
+        high_bp_weight = 1.0 + (self.high_weight - 1.0) * tf.minimum(high_bp_excess / 60.0, 1.0)
+        
+        # Low BP: weight increases linearly from 1.0 to low_weight
+        # Formula: 1.0 + (low_weight - 1.0) * (normal_low - bp) / 30
+        # At BP=90: weight=1.0, at BP=60: weight=low_weight
+        low_bp_deficit = tf.maximum(self.normal_low - y_true, 0.0)
+        low_bp_weight = 1.0 + (self.low_weight - 1.0) * tf.minimum(low_bp_deficit / 30.0, 1.0)
+        
+        # Combine weights: use high weight if BP>normal_high, low weight if BP<normal_low, else 1.0
+        sample_weights = tf.where(
+            y_true > self.normal_high,
+            high_bp_weight,
+            tf.where(y_true < self.normal_low, low_bp_weight, 1.0)
+        )
+        
+        # Apply weights and reduce
+        weighted_loss = huber_loss * sample_weights
+        return tf.reduce_mean(weighted_loss)
+    
+    def get_config(self):
+        """For model serialization."""
+        config = super().get_config()
+        config.update({
+            'delta': self.delta,
+            'normal_bp_range': (float(self.normal_low), float(self.normal_high)),
+            'high_weight': float(self.high_weight),
+            'low_weight': float(self.low_weight)
+        })
+        return config
 
 
 def create_pat_attention_layer(pat_channel, cnn_features, name_prefix="pat_attention"):
@@ -171,11 +256,15 @@ def create_phys_informed_cnn_lstm_attention(input_shape, return_attention=False)
         learning_rate=LEARNING_RATE,
         clipnorm=GRADIENT_CLIP_NORM  # Gradient clipping for LSTM stability
     )
+    
+    # Use weighted loss for both SBP and DBP
+    # SBP: High BP threshold 140 mmHg (hypertension stage 1)
+    # DBP: High BP threshold 90 mmHg (hypertension stage 1)
     model.compile(
         optimizer=optimizer,
         loss={
-            'sbp_output': Huber(delta=1.0),
-            'dbp_output': Huber(delta=1.0)
+            'sbp_output': WeightedHuberLoss(delta=1.0, normal_bp_range=(90, 140), high_weight=3.0, low_weight=2.0),
+            'dbp_output': WeightedHuberLoss(delta=1.0, normal_bp_range=(60, 90), high_weight=3.0, low_weight=2.0)
         },
         loss_weights={
             'sbp_output': 1.0,
