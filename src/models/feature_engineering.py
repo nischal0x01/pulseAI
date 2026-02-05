@@ -169,3 +169,70 @@ def create_4_channel_input(raw_signals, pat_sequences, hr_sequences):
     print(f"   - 4-channel input created with shape: {X_phys_informed.shape}")
 
     return X_phys_informed
+
+
+def normalize_pat_subject_wise(pat_sequences, patient_ids, train_mask):
+    """
+    Normalize PAT per patient using mean and std computed from TRAIN data only.
+    Apply the same normalization parameters for validation and test data.
+    
+    This prevents data leakage by ensuring normalization statistics are only computed
+    from training data for each patient.
+    
+    Args:
+        pat_sequences: Array of PAT sequences (n_samples, timesteps)
+        patient_ids: Array of patient IDs for each sample
+        train_mask: Boolean mask indicating training samples
+        
+    Returns:
+        normalized_pat: Subject-wise normalized PAT sequences
+        pat_stats: Dictionary {patient_id: {'mean': float, 'std': float}}
+    """
+    print("🔄 Normalizing PAT per patient using training data only...")
+    
+    normalized_pat = np.zeros_like(pat_sequences)
+    pat_stats = {}
+    
+    # First pass: compute statistics from training data only
+    train_patient_ids = patient_ids[train_mask]
+    train_pat = pat_sequences[train_mask]
+    unique_train_patients = np.unique(train_patient_ids)
+    
+    for patient_id in unique_train_patients:
+        patient_train_mask = train_patient_ids == patient_id
+        patient_train_pat = train_pat[patient_train_mask]
+        
+        # Compute mean and std across all time points and samples for this patient
+        mean = np.mean(patient_train_pat)
+        std = np.std(patient_train_pat)
+        
+        # Avoid division by zero
+        if std < 1e-8:
+            std = 1.0
+        
+        pat_stats[patient_id] = {'mean': mean, 'std': std}
+    
+    # Compute global statistics as fallback for patients not in training set
+    global_mean = np.mean(train_pat)
+    global_std = np.std(train_pat)
+    if global_std < 1e-8:
+        global_std = 1.0
+    
+    print(f"   - Computed PAT statistics for {len(pat_stats)} training patients")
+    print(f"   - Global PAT stats: mean={global_mean:.4f}, std={global_std:.4f}")
+    
+    # Second pass: apply normalization to all samples
+    for i, patient_id in enumerate(patient_ids):
+        if patient_id in pat_stats:
+            # Use patient-specific statistics
+            mean = pat_stats[patient_id]['mean']
+            std = pat_stats[patient_id]['std']
+        else:
+            # For validation/test patients not in training set, use global statistics
+            mean = global_mean
+            std = global_std
+        
+        normalized_pat[i] = (pat_sequences[i] - mean) / std
+    
+    print(f"   - PAT normalization complete")
+    return normalized_pat, pat_stats

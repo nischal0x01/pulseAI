@@ -39,7 +39,11 @@ except ImportError:
 
 def create_pat_attention_layer(pat_channel, cnn_features, name_prefix="pat_attention"):
     """
-    Create attention weights from PAT channel to reweight CNN features.
+    Create sigmoid-based attention gates from PAT channel to reweight CNN features.
+    
+    Unlike softmax attention that normalizes to sum to 1, sigmoid gating allows
+    multiple cardiac cycles to contribute simultaneously with independent weights in [0,1].
+    This is physiologically appropriate since multiple heartbeats can be significant.
     
     Args:
         pat_channel: PAT time series (batch, timesteps, 1)
@@ -47,17 +51,18 @@ def create_pat_attention_layer(pat_channel, cnn_features, name_prefix="pat_atten
         name_prefix: Prefix for layer names
         
     Returns:
-        Attended features (batch, timesteps, filters)
+        Attended features (batch, timesteps, filters), attention_weights (batch, timesteps, 1)
     """
-    # Extract PAT attention weights
+    # Extract PAT attention weights using sigmoid gating
     # PAT represents cardiovascular timing - use it to weight temporal importance
     attention = Dense(ATTENTION_UNITS, activation='relu', 
                      name=f'{name_prefix}_dense1')(pat_channel)
     attention = Dense(1, activation='linear', 
                      name=f'{name_prefix}_dense2')(attention)
     
-    # Apply softmax over time dimension to get attention weights
-    attention_weights = Activation('softmax', name=f'{name_prefix}_softmax')(attention)
+    # Apply sigmoid to get independent attention gates in [0, 1]
+    # Unlike softmax, these do NOT sum to 1, allowing multiple cardiac cycles to contribute
+    attention_weights = Activation('sigmoid', name=f'{name_prefix}_sigmoid')(attention)
     
     # Broadcast attention weights to all feature channels
     # attention_weights shape: (batch, timesteps, 1)
