@@ -17,6 +17,7 @@ from tensorflow.keras.layers import (
     BatchNormalization, Multiply, Softmax, Lambda, Reshape,
     GlobalAveragePooling1D, Concatenate, Activation
 )
+from tensorflow.keras.regularizers import l2
 from tensorflow.keras.optimizers import Adam
 from tensorflow.keras.losses import Huber
 import tensorflow.keras.backend as K
@@ -35,6 +36,9 @@ except ImportError:
         LSTM_UNITS_1, LSTM_UNITS_2, ATTENTION_UNITS,
         DENSE_UNITS, DROPOUT_RATE
     )
+
+# L2 Regularization strength
+L2_REG = 0.001  # Prevents overfitting by penalizing large weights
 
 
 def create_pat_attention_layer(pat_channel, cnn_features, name_prefix="pat_attention"):
@@ -56,8 +60,10 @@ def create_pat_attention_layer(pat_channel, cnn_features, name_prefix="pat_atten
     # Extract PAT attention weights using sigmoid gating
     # PAT represents cardiovascular timing - use it to weight temporal importance
     attention = Dense(ATTENTION_UNITS, activation='relu', 
+                     kernel_regularizer=l2(L2_REG),
                      name=f'{name_prefix}_dense1')(pat_channel)
     attention = Dense(1, activation='linear', 
+                     kernel_regularizer=l2(L2_REG),
                      name=f'{name_prefix}_dense2')(attention)
     
     # Apply sigmoid to get independent attention gates in [0, 1]
@@ -100,13 +106,17 @@ def create_phys_informed_cnn_lstm_attention(input_shape, return_attention=False)
     # ===== CNN Feature Extraction =====
     # Extract morphological features from all channels
     x = Conv1D(CONV1D_FILTERS_1, CONV1D_KERNEL_SIZE, 
-               activation='relu', padding='same', name='conv1d_1')(inputs)
+               activation='relu', padding='same',
+               kernel_regularizer=l2(L2_REG),
+               name='conv1d_1')(inputs)
     x = BatchNormalization(name='bn_1')(x)
     x = MaxPooling1D(2, name='pool_1')(x)
     x = Dropout(DROPOUT_RATE, name='dropout_1')(x)
     
     x = Conv1D(CONV1D_FILTERS_2, CONV1D_KERNEL_SIZE, 
-               activation='relu', padding='same', name='conv1d_2')(x)
+               activation='relu', padding='same',
+               kernel_regularizer=l2(L2_REG),
+               name='conv1d_2')(x)
     x = BatchNormalization(name='bn_2')(x)
     cnn_features = MaxPooling1D(2, name='pool_2')(x)
     cnn_features = Dropout(DROPOUT_RATE, name='dropout_2')(cnn_features)
@@ -125,19 +135,26 @@ def create_phys_informed_cnn_lstm_attention(input_shape, return_attention=False)
     
     # ===== LSTM Temporal Modeling =====
     # Bidirectional LSTM to capture forward and backward cardiovascular dynamics
-    lstm_out = LSTM(LSTM_UNITS_1, return_sequences=True, 
+    lstm_out = LSTM(LSTM_UNITS_1, return_sequences=True,
+                    kernel_regularizer=l2(L2_REG),
+                    recurrent_regularizer=l2(L2_REG),
                     name='lstm_1')(attended_features)
     lstm_out = Dropout(DROPOUT_RATE, name='dropout_3')(lstm_out)
     
-    lstm_out = LSTM(LSTM_UNITS_2, return_sequences=False, 
+    lstm_out = LSTM(LSTM_UNITS_2, return_sequences=False,
+                    kernel_regularizer=l2(L2_REG),
+                    recurrent_regularizer=l2(L2_REG),
                     name='lstm_2')(lstm_out)
     lstm_out = Dropout(DROPOUT_RATE, name='dropout_4')(lstm_out)
     
     # ===== Blood Pressure Regression =====
-    dense = Dense(DENSE_UNITS, activation='relu', name='dense_1')(lstm_out)
+    dense = Dense(DENSE_UNITS, activation='relu',
+                 kernel_regularizer=l2(L2_REG),
+                 name='dense_1')(lstm_out)
     dense = Dropout(DROPOUT_RATE, name='dropout_5')(dense)
     
     # Dual outputs: Systolic Blood Pressure (SBP) and Diastolic Blood Pressure (DBP)
+    # No regularization on output layers to allow full expressiveness
     sbp_output = Dense(1, activation='linear', name='sbp_output')(dense)
     dbp_output = Dense(1, activation='linear', name='dbp_output')(dense)
     
@@ -200,20 +217,27 @@ def create_simple_cnn_gru_model(input_shape):
     
     model = Sequential([
         Conv1D(CONV1D_FILTERS_1, CONV1D_KERNEL_SIZE, 
-               activation="relu", input_shape=input_shape, padding="same"),
+               activation="relu", input_shape=input_shape, padding="same",
+               kernel_regularizer=l2(L2_REG)),
         BatchNormalization(),
         MaxPooling1D(2),
         Dropout(DROPOUT_RATE),
         Conv1D(CONV1D_FILTERS_2, CONV1D_KERNEL_SIZE, 
-               activation="relu", padding="same"),
+               activation="relu", padding="same",
+               kernel_regularizer=l2(L2_REG)),
         BatchNormalization(),
         MaxPooling1D(2),
         Dropout(DROPOUT_RATE),
-        GRU(LSTM_UNITS_1, return_sequences=True),
+        GRU(LSTM_UNITS_1, return_sequences=True,
+            kernel_regularizer=l2(L2_REG),
+            recurrent_regularizer=l2(L2_REG)),
         Dropout(DROPOUT_RATE),
-        GRU(LSTM_UNITS_2),
+        GRU(LSTM_UNITS_2,
+            kernel_regularizer=l2(L2_REG),
+            recurrent_regularizer=l2(L2_REG)),
         Dropout(DROPOUT_RATE),
-        Dense(DENSE_UNITS, activation="relu"),
+        Dense(DENSE_UNITS, activation="relu",
+              kernel_regularizer=l2(L2_REG)),
         Dense(1),
     ], name='Simple_CNN_GRU')
     

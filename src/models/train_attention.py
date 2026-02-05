@@ -148,37 +148,40 @@ def main():
     # Validate 4-channel input
     validate_data_integrity(X_phys_informed, "4-channel input")
     
-    # ===== Step 6.5: Compute Baselines and Convert to Residuals =====
-    print("\n🔄 STEP 6.5: Computing baselines and converting to residuals (ΔBP training)...")
+    # ===== Step 6.5: Train on Absolute BP (Fixed from Residual Training) =====
+    print("\n🔄 STEP 6.5: Using absolute BP values for training...")
     
-    # FIX 1: Compute per-patient baselines from training data only
-    sbp_baselines = compute_sbp_baselines(patient_ids_agg, y_sbp, train_mask)
-    dbp_baselines = compute_dbp_baselines(patient_ids_agg, y_dbp, train_mask)
+    # FIXED: Train directly on absolute BP instead of residuals
+    # This avoids baseline reconstruction errors that cause negative R²
+    # Comment out baseline computation to switch from ΔBP to absolute training:
+    # sbp_baselines = compute_sbp_baselines(patient_ids_agg, y_sbp, train_mask)
+    # dbp_baselines = compute_dbp_baselines(patient_ids_agg, y_dbp, train_mask)
+    # y_sbp_residual = convert_to_residuals(patient_ids_agg, y_sbp, sbp_baselines)
+    # y_dbp_residual = convert_to_residuals(patient_ids_agg, y_dbp, dbp_baselines)
     
-    # Convert to residuals: ΔBP = BP - BP_baseline
-    y_sbp_residual = convert_to_residuals(patient_ids_agg, y_sbp, sbp_baselines)
-    y_dbp_residual = convert_to_residuals(patient_ids_agg, y_dbp, dbp_baselines)
+    # Use absolute BP values directly
+    y_sbp_absolute = y_sbp.copy()
+    y_dbp_absolute = y_dbp.copy()
     
-    validate_data_integrity(y_sbp_residual, "SBP residuals (ΔBP)")
-    validate_data_integrity(y_dbp_residual, "DBP residuals (ΔBP)")
+    validate_data_integrity(y_sbp_absolute, "SBP absolute values")
+    validate_data_integrity(y_dbp_absolute, "DBP absolute values")
     
-    print(f"   - SBP residual range: {np.min(y_sbp_residual):.1f} to {np.max(y_sbp_residual):.1f} mmHg")
-    print(f"   - DBP residual range: {np.min(y_dbp_residual):.1f} to {np.max(y_dbp_residual):.1f} mmHg")
-    print(f"   - Model will predict ΔBP instead of absolute BP")
+    print(f"   - SBP range: {np.min(y_sbp_absolute):.1f} to {np.max(y_sbp_absolute):.1f} mmHg")
+    print(f"   - DBP range: {np.min(y_dbp_absolute):.1f} to {np.max(y_dbp_absolute):.1f} mmHg")
+    print(f"   - Model will predict absolute BP values directly")
     
     # Apply masks for train/val/test split
     X_train_phys = X_phys_informed[train_mask]
     X_val_phys = X_phys_informed[val_mask]
     X_test_phys = X_phys_informed[test_mask]
     
-    # Use residuals for training
-    y_train_sbp = y_sbp_residual[train_mask]
-    y_val_sbp = y_sbp_residual[val_mask]
-    y_test_sbp = y_sbp_residual[test_mask]
-    
-    y_train_dbp = y_dbp_residual[train_mask]
-    y_val_dbp = y_dbp_residual[val_mask]
-    y_test_dbp = y_dbp_residual[test_mask]
+    # Use absolute BP values for training
+    y_train_sbp = y_sbp_absolute[train_mask]
+    y_train_dbp = y_dbp_absolute[train_mask]
+    y_val_sbp = y_sbp_absolute[val_mask]
+    y_val_dbp = y_dbp_absolute[val_mask]
+    y_test_sbp = y_sbp_absolute[test_mask]
+    y_test_dbp = y_dbp_absolute[test_mask]
     
     # Store patient IDs for reconstruction
     train_patient_ids = patient_ids_agg[train_mask]
@@ -377,14 +380,15 @@ def main():
     # ===== Step 12: Evaluate on Validation Set =====
     print("\n📊 STEP 12: Evaluating on validation set...")
     
-    # Predict residuals
+    # Predict absolute BP (no reconstruction needed)
     val_predictions = phys_informed_model.predict(X_val_phys, verbose=0)
-    y_pred_sbp_residual = val_predictions[0].flatten()
-    y_pred_dbp_residual = val_predictions[1].flatten()
+    y_pred_sbp_val = val_predictions[0].flatten()  # Already absolute BP
+    y_pred_dbp_val = val_predictions[1].flatten()  # Already absolute BP
     
-    # Reconstruct absolute BP from residuals
-    y_pred_sbp_val = reconstruct_from_residuals(val_patient_ids, y_pred_sbp_residual, sbp_baselines)
-    y_pred_dbp_val = reconstruct_from_residuals(val_patient_ids, y_pred_dbp_residual, dbp_baselines)
+    # FIXED: No reconstruction needed since model predicts absolute BP
+    # Old approach (residual training):
+    # y_pred_sbp_val = reconstruct_from_residuals(val_patient_ids, y_pred_sbp_residual, sbp_baselines)
+    # y_pred_dbp_val = reconstruct_from_residuals(val_patient_ids, y_pred_dbp_residual, dbp_baselines)
     
     # Get actual absolute BP values for validation
     y_true_sbp_val = y_sbp[val_mask]
@@ -415,15 +419,16 @@ def main():
     # Copy weights from trained model
     attention_model.set_weights(phys_informed_model.get_weights())
     
-    # Get predictions (residuals) and attention weights
+    # Get predictions (absolute BP) and attention weights
     predictions = attention_model.predict(X_test_phys, verbose=0)
-    y_pred_sbp_residual = predictions[0].flatten()
-    y_pred_dbp_residual = predictions[1].flatten()
+    y_pred_sbp_test = predictions[0].flatten()  # Already absolute BP
+    y_pred_dbp_test = predictions[1].flatten()  # Already absolute BP
     attention_weights = predictions[2]
     
-    # Reconstruct absolute BP from residuals
-    y_pred_sbp_test = reconstruct_from_residuals(test_patient_ids, y_pred_sbp_residual, sbp_baselines)
-    y_pred_dbp_test = reconstruct_from_residuals(test_patient_ids, y_pred_dbp_residual, dbp_baselines)
+    # FIXED: No reconstruction needed since model predicts absolute BP
+    # Old approach (residual training):
+    # y_pred_sbp_test = reconstruct_from_residuals(test_patient_ids, y_pred_sbp_residual, sbp_baselines)
+    # y_pred_dbp_test = reconstruct_from_residuals(test_patient_ids, y_pred_dbp_residual, dbp_baselines)
     
     # Get actual absolute BP values for test
     y_true_sbp_test = y_sbp[test_mask]
