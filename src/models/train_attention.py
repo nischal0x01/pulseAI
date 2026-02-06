@@ -32,11 +32,30 @@ from data_loader import load_aggregate_data
 # Training configuration
 ENABLE_TWO_PHASE_TRAINING = False  # Set to True to freeze CNN layers and train LSTM+attention only
 RESUME_LR_REDUCTION_FACTOR = 0.5  # Reduce learning rate by this factor when resuming
-from preprocessing import preprocess_signals, create_subject_wise_splits
+
+# Data augmentation configuration
+ENABLE_AUGMENTATION = True  # Enable augmentation for high BP samples
+AUGMENTATION_FACTOR = 2.0  # Target 2x representation for high BP samples
+BP_THRESHOLD = 140  # SBP threshold to define "high BP" for augmentation
+AUGMENTATION_CONFIG = {
+    'time_warp': True,
+    'amplitude_scale': True,
+    'add_noise': True,
+    'warp_factor': 0.1,  # ±10% temporal stretch
+    'scale_factor': 0.05,  # ±5% amplitude variation
+    'snr_range': (20, 30)  # SNR 20-30 dB for noise injection
+}
+
+from preprocessing import (
+    preprocess_signals, create_subject_wise_splits,
+    compute_sbp_baselines, compute_dbp_baselines,
+    convert_to_residuals, reconstruct_from_residuals
+)
 from feature_engineering import (
     extract_physiological_features, standardize_feature_length,
-    create_4_channel_input
+    create_4_channel_input, normalize_pat_subject_wise
 )
+from augmentation import augment_high_bp_samples
 from model_builder_attention import (
     create_phys_informed_model,
     create_attention_visualization_model
@@ -107,7 +126,31 @@ def main():
     ppg_raw = signals_agg[:, 0, :]
     ecg_raw = signals_agg[:, 1, :]
     
-    pat_seqs, hr_seqs, peak_indices = extract_physiological_features(ecg_raw, ppg_raw)
+    # Extract features with quality mask
+    pat_seqs, hr_seqs, quality_mask = extract_physiological_features(ecg_raw, ppg_raw)
+    
+    # Filter out low-quality samples
+    n_low_quality = (~quality_mask).sum()
+    if n_low_quality > 0:
+        print(f"   ⚠️  Filtering {n_low_quality} low-quality windows ({100*n_low_quality/len(quality_mask):.1f}%)...")
+        
+        # Apply quality mask to all data
+        signals_agg = signals_agg[quality_mask]
+        processed_signals = processed_signals[quality_mask]
+        pat_seqs = pat_seqs[quality_mask]
+        hr_seqs = hr_seqs[quality_mask]
+        y_sbp = y_sbp[quality_mask]
+        y_dbp = y_dbp[quality_mask]
+        patient_ids_agg = patient_ids_agg[quality_mask]
+        
+        # Update split masks to match filtered data
+        train_mask = train_mask[quality_mask]
+        val_mask = val_mask[quality_mask]
+        test_mask = test_mask[quality_mask]
+        
+        print(f"   ✅ Kept {quality_mask.sum()} high-quality samples")
+    else:
+        print(f"   ✅ All {len(quality_mask)} samples have good signal quality")
     
     # Standardize length to match processed_signals
     target_len = processed_signals.shape[1]
@@ -120,14 +163,16 @@ def main():
     validate_data_integrity(hr_seqs, "HR sequences (before scaling)")
     
     # ===== Step 5: Scale Physiological Features =====
-    print("\n🔄 STEP 5: Scaling physiological features (using training set statistics)...")
-    scaler_pat = StandardScaler()
+    print("\n🔄 STEP 5: Scaling physiological features...")
+    
+    # FIX 3: Subject-wise PAT normalization (using training set statistics per patient)
+    print("   - Applying subject-wise PAT normalization (train stats only per patient)...")
+    pat_seqs_scaled, pat_stats = normalize_pat_subject_wise(pat_seqs, patient_ids_agg, train_mask)
+    
+    # HR normalization (global statistics from training data)
+    print("   - Applying global HR normalization (train stats only)...")
     scaler_hr = StandardScaler()
-    
-    scaler_pat.fit(pat_seqs[train_mask])
     scaler_hr.fit(hr_seqs[train_mask])
-    
-    pat_seqs_scaled = scaler_pat.transform(pat_seqs)
     hr_seqs_scaled = scaler_hr.transform(hr_seqs)
     
     # Validate after scaling
@@ -142,18 +187,76 @@ def main():
     # Validate 4-channel input
     validate_data_integrity(X_phys_informed, "4-channel input")
     
+    # ===== Step 6.5: Train on Absolute BP (Fixed from Residual Training) =====
+    print("\n🔄 STEP 6.5: Using absolute BP values for training...")
+    
+    # FIXED: Train directly on absolute BP instead of residuals
+    # This avoids baseline reconstruction errors that cause negative R²
+    # Comment out baseline computation to switch from ΔBP to absolute training:
+    # sbp_baselines = compute_sbp_baselines(patient_ids_agg, y_sbp, train_mask)
+    # dbp_baselines = compute_dbp_baselines(patient_ids_agg, y_dbp, train_mask)
+    # y_sbp_residual = convert_to_residuals(patient_ids_agg, y_sbp, sbp_baselines)
+    # y_dbp_residual = convert_to_residuals(patient_ids_agg, y_dbp, dbp_baselines)
+    
+    # Use absolute BP values directly
+    y_sbp_absolute = y_sbp.copy()
+    y_dbp_absolute = y_dbp.copy()
+    
+    validate_data_integrity(y_sbp_absolute, "SBP absolute values")
+    validate_data_integrity(y_dbp_absolute, "DBP absolute values")
+    
+    print(f"   - SBP range: {np.min(y_sbp_absolute):.1f} to {np.max(y_sbp_absolute):.1f} mmHg")
+    print(f"   - DBP range: {np.min(y_dbp_absolute):.1f} to {np.max(y_dbp_absolute):.1f} mmHg")
+    print(f"   - Model will predict absolute BP values directly")
+    
     # Apply masks for train/val/test split
     X_train_phys = X_phys_informed[train_mask]
     X_val_phys = X_phys_informed[val_mask]
     X_test_phys = X_phys_informed[test_mask]
     
-    y_train_sbp = y_sbp[train_mask]
-    y_val_sbp = y_sbp[val_mask]
-    y_test_sbp = y_sbp[test_mask]
+    # Use absolute BP values for training
+    y_train_sbp = y_sbp_absolute[train_mask]
+    y_train_dbp = y_dbp_absolute[train_mask]
+    y_val_sbp = y_sbp_absolute[val_mask]
+    y_val_dbp = y_dbp_absolute[val_mask]
+    y_test_sbp = y_sbp_absolute[test_mask]
+    y_test_dbp = y_dbp_absolute[test_mask]
     
-    y_train_dbp = y_dbp[train_mask]
-    y_val_dbp = y_dbp[val_mask]
-    y_test_dbp = y_dbp[test_mask]
+    # ===== Step 6.6: Data Augmentation for High BP Samples =====
+    if ENABLE_AUGMENTATION:
+        print(f"\n🔄 STEP 6.6: Augmenting high BP samples (SBP > {BP_THRESHOLD} mmHg)...")
+        print(f"   - Augmentation factor: {AUGMENTATION_FACTOR}x")
+        print(f"   - Techniques: time warp (±{AUGMENTATION_CONFIG['warp_factor']*100:.0f}%), "
+              f"amplitude scale (±{AUGMENTATION_CONFIG['scale_factor']*100:.0f}%), "
+              f"noise (SNR {AUGMENTATION_CONFIG['snr_range'][0]}-{AUGMENTATION_CONFIG['snr_range'][1]} dB)")
+        
+        # Count high BP samples before augmentation
+        n_high_bp_before = (y_train_sbp > BP_THRESHOLD).sum()
+        n_total_before = len(y_train_sbp)
+        print(f"   - Training set before augmentation: {n_high_bp_before}/{n_total_before} "
+              f"({100*n_high_bp_before/n_total_before:.1f}%) high BP samples")
+        
+        # Augment training data only (not validation or test)
+        X_train_phys, y_train_sbp, y_train_dbp = augment_high_bp_samples(
+            X_train_phys, y_train_sbp, y_train_dbp,
+            augmentation_factor=AUGMENTATION_FACTOR,
+            bp_threshold=BP_THRESHOLD,
+            augmentation_config=AUGMENTATION_CONFIG
+        )
+        
+        # Report results
+        n_high_bp_after = (y_train_sbp > BP_THRESHOLD).sum()
+        n_total_after = len(y_train_sbp)
+        print(f"   - Training set after augmentation: {n_high_bp_after}/{n_total_after} "
+              f"({100*n_high_bp_after/n_total_after:.1f}%) high BP samples")
+        print(f"   ✅ Augmentation complete: {n_total_before} → {n_total_after} training samples")
+    else:
+        print("\n⏭️  STEP 6.6: Data augmentation disabled")
+    
+    # Store patient IDs for reconstruction
+    train_patient_ids = patient_ids_agg[train_mask]
+    val_patient_ids = patient_ids_agg[val_mask]
+    test_patient_ids = patient_ids_agg[test_mask]
     
     # Final validation before training
     print("\n✅ STEP 7: Final data validation...")
@@ -346,14 +449,35 @@ def main():
     
     # ===== Step 12: Evaluate on Validation Set =====
     print("\n📊 STEP 12: Evaluating on validation set...")
-    val_results = comprehensive_evaluation(
-        phys_informed_model,
-        X_val_phys,
-        {'sbp': y_val_sbp, 'dbp': y_val_dbp},
-        dataset_name="Validation",
-        visualize_attention=False,
-        save_dir=CHECKPOINT_DIR
-    )
+    
+    # Predict absolute BP (no reconstruction needed)
+    val_predictions = phys_informed_model.predict(X_val_phys, verbose=0)
+    y_pred_sbp_val = val_predictions[0].flatten()  # Already absolute BP
+    y_pred_dbp_val = val_predictions[1].flatten()  # Already absolute BP
+    
+    # FIXED: No reconstruction needed since model predicts absolute BP
+    # Old approach (residual training):
+    # y_pred_sbp_val = reconstruct_from_residuals(val_patient_ids, y_pred_sbp_residual, sbp_baselines)
+    # y_pred_dbp_val = reconstruct_from_residuals(val_patient_ids, y_pred_dbp_residual, dbp_baselines)
+    
+    # Get actual absolute BP values for validation
+    y_true_sbp_val = y_sbp[val_mask]
+    y_true_dbp_val = y_dbp[val_mask]
+    
+    # Calculate metrics on reconstructed absolute values
+    sbp_metrics_val = calculate_comprehensive_metrics(y_true_sbp_val, y_pred_sbp_val)
+    dbp_metrics_val = calculate_comprehensive_metrics(y_true_dbp_val, y_pred_dbp_val)
+    
+    val_results = {
+        'metrics': {
+            'sbp': sbp_metrics_val,
+            'dbp': dbp_metrics_val
+        }
+    }
+    
+    print("\n📊 Validation Set Performance (Reconstructed from ΔBP):")
+    print(f"   SBP - MAE: {sbp_metrics_val['MAE']:.2f} mmHg, RMSE: {sbp_metrics_val['RMSE']:.2f} mmHg, R²: {sbp_metrics_val['R2']:.4f}")
+    print(f"   DBP - MAE: {dbp_metrics_val['MAE']:.2f} mmHg, RMSE: {dbp_metrics_val['RMSE']:.2f} mmHg, R²: {dbp_metrics_val['R2']:.4f}")
     
     # ===== Step 13: Evaluate on Test Set =====
     print("\n📊 STEP 13: Evaluating on test set...")
@@ -365,19 +489,88 @@ def main():
     # Copy weights from trained model
     attention_model.set_weights(phys_informed_model.get_weights())
     
-    # Get predictions and attention weights
+    # Get predictions (absolute BP) and attention weights
     predictions = attention_model.predict(X_test_phys, verbose=0)
-    y_pred_sbp, y_pred_dbp, attention_weights = predictions[0], predictions[1], predictions[2]
+    y_pred_sbp_test = predictions[0].flatten()  # Already absolute BP
+    y_pred_dbp_test = predictions[1].flatten()  # Already absolute BP
+    attention_weights = predictions[2]
     
-    # Perform comprehensive evaluation
-    test_results = comprehensive_evaluation(
-        attention_model,
-        X_test_phys,
-        {'sbp': y_test_sbp, 'dbp': y_test_dbp},
-        dataset_name="Test",
-        visualize_attention=True,
-        save_dir=CHECKPOINT_DIR
-    )
+    # FIXED: No reconstruction needed since model predicts absolute BP
+    # Old approach (residual training):
+    # y_pred_sbp_test = reconstruct_from_residuals(test_patient_ids, y_pred_sbp_residual, sbp_baselines)
+    # y_pred_dbp_test = reconstruct_from_residuals(test_patient_ids, y_pred_dbp_residual, dbp_baselines)
+    
+    # Get actual absolute BP values for test
+    y_true_sbp_test = y_sbp[test_mask]
+    y_true_dbp_test = y_dbp[test_mask]
+    
+    # Calculate metrics on reconstructed absolute values
+    sbp_metrics_test = calculate_comprehensive_metrics(y_true_sbp_test, y_pred_sbp_test)
+    dbp_metrics_test = calculate_comprehensive_metrics(y_true_dbp_test, y_pred_dbp_test)
+    
+    test_results = {
+        'metrics': {
+            'sbp': sbp_metrics_test,
+            'dbp': dbp_metrics_test
+        },
+        'attention_weights': attention_weights
+    }
+    
+    print("\n📊 Test Set Performance (Reconstructed from ΔBP):")
+    print(f"   SBP - MAE: {sbp_metrics_test['MAE']:.2f} mmHg, RMSE: {sbp_metrics_test['RMSE']:.2f} mmHg, R²: {sbp_metrics_test['R2']:.4f}")
+    print(f"   DBP - MAE: {dbp_metrics_test['MAE']:.2f} mmHg, RMSE: {dbp_metrics_test['RMSE']:.2f} mmHg, R²: {dbp_metrics_test['R2']:.4f}")
+    
+    # Visualize attention weights
+    print("\n📊 Analyzing attention patterns...")
+    avg_attention = np.mean(attention_weights, axis=0)
+    print(f"   - Average attention weight range: [{np.min(avg_attention):.4f}, {np.max(avg_attention):.4f}]")
+    print(f"   - Attention weights sum per sample (should NOT be 1.0 for sigmoid): {np.mean(np.sum(attention_weights, axis=1)):.4f}")
+    
+    # Plot attention visualization
+    fig, ax = plt.subplots(figsize=(12, 4))
+    ax.plot(avg_attention.flatten(), linewidth=2)
+    ax.set_xlabel('Time Step', fontsize=12, fontweight='bold')
+    ax.set_ylabel('Average Attention Weight (Sigmoid)', fontsize=12, fontweight='bold')
+    ax.set_title('PAT-Based Sigmoid Attention Weights Over Time', fontsize=14, fontweight='bold')
+    ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(os.path.join(CHECKPOINT_DIR, 'attention_weights.png'), dpi=300, bbox_inches='tight')
+    plt.show()
+    
+    # Plot predictions vs actual
+    fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+    
+    # SBP plot
+    axes[0].scatter(y_true_sbp_test, y_pred_sbp_test, alpha=0.6, edgecolors='k', s=50)
+    min_sbp = min(y_true_sbp_test.min(), y_pred_sbp_test.min())
+    max_sbp = max(y_true_sbp_test.max(), y_pred_sbp_test.max())
+    axes[0].plot([min_sbp, max_sbp], [min_sbp, max_sbp], 'r--', lw=2, label='Perfect Prediction')
+    axes[0].fill_between([min_sbp, max_sbp], [min_sbp - 10, max_sbp - 10], [min_sbp + 10, max_sbp + 10],
+                         alpha=0.2, color='green', label='±10 mmHg')
+    axes[0].set_xlabel('Actual SBP (mmHg)', fontsize=12, fontweight='bold')
+    axes[0].set_ylabel('Predicted SBP (mmHg)', fontsize=12, fontweight='bold')
+    axes[0].set_title(f'Test Set SBP Predictions\nMAE={sbp_metrics_test["MAE"]:.2f} mmHg, R²={sbp_metrics_test["R2"]:.4f}',
+                     fontsize=14, fontweight='bold')
+    axes[0].legend(fontsize=10)
+    axes[0].grid(True, alpha=0.3)
+    
+    # DBP plot
+    axes[1].scatter(y_true_dbp_test, y_pred_dbp_test, alpha=0.6, edgecolors='k', s=50)
+    min_dbp = min(y_true_dbp_test.min(), y_pred_dbp_test.min())
+    max_dbp = max(y_true_dbp_test.max(), y_pred_dbp_test.max())
+    axes[1].plot([min_dbp, max_dbp], [min_dbp, max_dbp], 'r--', lw=2, label='Perfect Prediction')
+    axes[1].fill_between([min_dbp, max_dbp], [min_dbp - 10, max_dbp - 10], [min_dbp + 10, max_dbp + 10],
+                         alpha=0.2, color='green', label='±10 mmHg')
+    axes[1].set_xlabel('Actual DBP (mmHg)', fontsize=12, fontweight='bold')
+    axes[1].set_ylabel('Predicted DBP (mmHg)', fontsize=12, fontweight='bold')
+    axes[1].set_title(f'Test Set DBP Predictions\nMAE={dbp_metrics_test["MAE"]:.2f} mmHg, R²={dbp_metrics_test["R2"]:.4f}',
+                     fontsize=14, fontweight='bold')
+    axes[1].legend(fontsize=10)
+    axes[1].grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    plt.savefig(os.path.join(CHECKPOINT_DIR, 'test_predictions.png'), dpi=300, bbox_inches='tight')
+    plt.show()
     
     # ===== Step 14: Final Summary =====
     print("\n" + "="*70)

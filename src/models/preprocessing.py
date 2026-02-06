@@ -102,3 +102,124 @@ def create_subject_wise_splits(patient_ids, test_size=TEST_SIZE, val_size=VAL_SI
     print(f"   - Validation samples: {np.sum(val_mask)} ({np.sum(val_mask)/len(patient_ids)*100:.1f}%)")
     print(f"   - Test samples: {np.sum(test_mask)} ({np.sum(test_mask)/len(patient_ids)*100:.1f}%)")
     return train_mask, val_mask, test_mask
+
+
+def compute_sbp_baselines(patient_ids, sbp_labels, train_mask):
+    """
+    Compute per-patient SBP baseline using TRAIN split only.
+    Returns a dictionary {patient_id: baseline_sbp}.
+    
+    Args:
+        patient_ids: Array of patient IDs for all samples
+        sbp_labels: Array of SBP labels for all samples
+        train_mask: Boolean mask indicating training samples
+        
+    Returns:
+        Dictionary mapping patient_id to baseline SBP value
+    """
+    print("🔄 Computing per-patient SBP baselines from training data...")
+    
+    # Only use training data to compute baselines
+    train_patient_ids = patient_ids[train_mask]
+    train_sbp = sbp_labels[train_mask]
+    
+    baselines = {}
+    unique_train_patients = np.unique(train_patient_ids)
+    
+    for patient_id in unique_train_patients:
+        patient_mask = train_patient_ids == patient_id
+        patient_sbp = train_sbp[patient_mask]
+        baseline = np.mean(patient_sbp)
+        baselines[patient_id] = baseline
+    
+    print(f"   - Computed baselines for {len(baselines)} patients")
+    print(f"   - Baseline SBP range: {np.min(list(baselines.values())):.1f} - {np.max(list(baselines.values())):.1f} mmHg")
+    print(f"   - Mean baseline SBP: {np.mean(list(baselines.values())):.1f} mmHg")
+    
+    return baselines
+
+
+def compute_dbp_baselines(patient_ids, dbp_labels, train_mask):
+    """
+    Compute per-patient DBP baseline using TRAIN split only.
+    Returns a dictionary {patient_id: baseline_dbp}.
+    
+    Args:
+        patient_ids: Array of patient IDs for all samples
+        dbp_labels: Array of DBP labels for all samples
+        train_mask: Boolean mask indicating training samples
+        
+    Returns:
+        Dictionary mapping patient_id to baseline DBP value
+    """
+    print("🔄 Computing per-patient DBP baselines from training data...")
+    
+    # Only use training data to compute baselines
+    train_patient_ids = patient_ids[train_mask]
+    train_dbp = dbp_labels[train_mask]
+    
+    baselines = {}
+    unique_train_patients = np.unique(train_patient_ids)
+    
+    for patient_id in unique_train_patients:
+        patient_mask = train_patient_ids == patient_id
+        patient_dbp = train_dbp[patient_mask]
+        baseline = np.mean(patient_dbp)
+        baselines[patient_id] = baseline
+    
+    print(f"   - Computed baselines for {len(baselines)} patients")
+    print(f"   - Baseline DBP range: {np.min(list(baselines.values())):.1f} - {np.max(list(baselines.values())):.1f} mmHg")
+    print(f"   - Mean baseline DBP: {np.mean(list(baselines.values())):.1f} mmHg")
+    
+    return baselines
+
+
+def convert_to_residuals(patient_ids, bp_labels, bp_baselines):
+    """
+    Convert absolute BP labels to residuals (ΔBP = BP - BP_baseline).
+    
+    Args:
+        patient_ids: Array of patient IDs for samples
+        bp_labels: Array of absolute BP labels
+        bp_baselines: Dictionary mapping patient_id to baseline BP
+        
+    Returns:
+        Array of residual BP values (ΔBP)
+    """
+    residuals = np.zeros_like(bp_labels)
+    
+    for i, patient_id in enumerate(patient_ids):
+        if patient_id in bp_baselines:
+            residuals[i] = bp_labels[i] - bp_baselines[patient_id]
+        else:
+            # For validation/test patients, use global mean baseline
+            global_baseline = np.mean(list(bp_baselines.values()))
+            residuals[i] = bp_labels[i] - global_baseline
+    
+    return residuals
+
+
+def reconstruct_from_residuals(patient_ids, bp_residuals, bp_baselines):
+    """
+    Reconstruct absolute BP predictions from residuals.
+    BP_pred = BP_baseline + ΔBP_pred
+    
+    Args:
+        patient_ids: Array of patient IDs for samples
+        bp_residuals: Array of predicted residual BP values
+        bp_baselines: Dictionary mapping patient_id to baseline BP
+        
+    Returns:
+        Array of reconstructed absolute BP values
+    """
+    reconstructed = np.zeros_like(bp_residuals)
+    
+    for i, patient_id in enumerate(patient_ids):
+        if patient_id in bp_baselines:
+            reconstructed[i] = bp_residuals[i] + bp_baselines[patient_id]
+        else:
+            # For validation/test patients, use global mean baseline
+            global_baseline = np.mean(list(bp_baselines.values()))
+            reconstructed[i] = bp_residuals[i] + global_baseline
+    
+    return reconstructed

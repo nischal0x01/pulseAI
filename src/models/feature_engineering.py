@@ -1,10 +1,11 @@
 """
-Feature engineering utilities for extracting physiological features.
+Feature engineering utilities for extracting physiological features with improved 
+stability for Blood Pressure estimation.
 """
 
 import numpy as np
 import pandas as pd
-from scipy.signal import find_peaks
+from scipy.signal import find_peaks, butter, filtfilt
 from scipy.interpolate import interp1d
 try:
     from .config import (
@@ -20,91 +21,136 @@ except ImportError:
     )
 
 
+def bandpass_filter(data, lowcut=0.5, highcut=8.0, fs=SAMPLING_RATE, order=4):
+    """Apply a butterworth bandpass filter to clean PPG/ECG signals."""
+    nyq = 0.5 * fs
+    low = lowcut / nyq
+    high = highcut / nyq
+    
+    # Validate frequency bands
+    if low <= 0 or high >= 1:
+        print(f"⚠️  Invalid filter bands: low={low}, high={high}. Skipping filter.")
+        return data
+    
+    b, a = butter(order, [low, high], btype='band')
+    return filtfilt(b, a, data, padlen=min(len(data)-1, 3*max(len(b), len(a))))
+
+
 def extract_physiological_features(ecg_signals, ppg_signals, sampling_rate=SAMPLING_RATE):
-    """Extract Pulse Arrival Time (PAT) and Heart Rate (HR) from ECG and PPG signals."""
-    print("💓 Extracting physiological features (PAT, HR)...")
+    """
+    Extract PAT and HR using improved PPG foot detection with APG (2nd derivative).
+    Includes signal quality check to handle noisy windows.
+    
+    Returns:
+        pat_sequences: (n_samples, timesteps) array of PAT values
+        hr_sequences: (n_samples, timesteps) array of HR values
+        quality_mask: (n_samples,) boolean array indicating valid windows
+    """
+    print("💓 Extracting robust physiological features (PAT, HR)...")
 
     all_pat_sequences = []
     all_hr_sequences = []
-    all_peak_indices = {'r_peaks': [], 'ppg_feet': []}
+    quality_mask = []  # Track which windows have good signal quality
 
     for i in range(ecg_signals.shape[0]):
         ecg = ecg_signals[i]
-        ppg = ppg_signals[i]
+        
+        # Apply bandpass filter to PPG for cleaner foot detection
+        try:
+            ppg = bandpass_filter(ppg_signals[i], lowcut=0.5, highcut=8.0, fs=sampling_rate)
+        except Exception as e:
+            print(f"   ⚠️  Sample {i}: Filter failed ({e}), using raw PPG")
+            ppg = ppg_signals[i]
 
-        # --- R-peak detection for HR ---
+        # --- 1. R-peak detection (ECG) ---
         r_peaks, _ = find_peaks(
             ecg, 
             height=np.mean(ecg) + R_PEAK_HEIGHT_MULTIPLIER * np.std(ecg), 
-            distance=sampling_rate * MIN_R_PEAK_DISTANCE_MULTIPLIER
+            distance=int(sampling_rate * MIN_R_PEAK_DISTANCE_MULTIPLIER)
         )
-        all_peak_indices['r_peaks'].append(r_peaks)
 
-        hr_sequence = np.full_like(ecg, fill_value=np.nan)
+        # --- 2. PPG Foot Detection using 2nd derivative (APG) ---
+        # The 2nd derivative helps identify the foot of the PPG more reliably
+        ppg_diff2 = np.diff(ppg, n=2)
+        # Pad to maintain original length
+        ppg_diff2 = np.pad(ppg_diff2, (1, 1), mode='edge')
+        
+        # Find peaks in 2nd derivative (corresponds to rapid upstroke)
+        ppg_feet, _ = find_peaks(
+            ppg_diff2, 
+            distance=int(sampling_rate * MIN_R_PEAK_DISTANCE_MULTIPLIER)
+        )
+        
+        # Signal Quality Check: Need at least 2 cardiac cycles
+        if len(r_peaks) < 2 or len(ppg_feet) < 2:
+            quality_mask.append(False)
+            # Fill with reasonable defaults
+            all_hr_sequences.append(np.full(len(ecg), (HR_MIN + HR_MAX) / 2))
+            all_pat_sequences.append(np.full(len(ecg), (PAT_MIN + PAT_MAX) / 2))
+            continue
+        
+        quality_mask.append(True)
+
+        # --- 3. HR Calculation with safe interpolation ---
+        instant_hr = sampling_rate * 60.0 / np.diff(r_peaks)
+        instant_hr = np.clip(instant_hr, HR_MIN, HR_MAX)  # Clip before interpolation
+        
         if len(r_peaks) > 1:
-            instant_hr = sampling_rate * 60.0 / np.diff(r_peaks)
-            interp_func = interp1d(r_peaks[1:], instant_hr, kind='linear', bounds_error=False, fill_value='extrapolate')
-            hr_sequence = interp_func(np.arange(len(ecg)))
+            # Use constant fill values instead of extrapolation
+            interp_hr = interp1d(
+                r_peaks[1:], instant_hr, 
+                kind='linear', 
+                bounds_error=False, 
+                fill_value=(instant_hr[0], instant_hr[-1])
+            )
+            hr_sequence = interp_hr(np.arange(len(ecg)))
             hr_sequence = np.clip(hr_sequence, HR_MIN, HR_MAX)
+        else:
+            hr_sequence = np.full(len(ecg), (HR_MIN + HR_MAX) / 2)
+        
         all_hr_sequences.append(hr_sequence)
 
-        # --- PPG foot detection for PAT ---
-        ppg_feet, _ = find_peaks(-ppg, distance=sampling_rate * MIN_R_PEAK_DISTANCE_MULTIPLIER)
-        all_peak_indices['ppg_feet'].append(ppg_feet)
+        # --- 4. PAT Calculation (R-peak to PPG foot) ---
+        pat_values = []
+        corresponding_times = []
+        
+        for r_peak in r_peaks:
+            # Find the first PPG foot occurring after the R-peak
+            following_feet = ppg_feet[ppg_feet > r_peak]
+            if len(following_feet) > 0:
+                pat = (following_feet[0] - r_peak) / sampling_rate
+                if PAT_MIN <= pat <= PAT_MAX:
+                    pat_values.append(pat)
+                    corresponding_times.append(r_peak)
 
-        # --- PAT calculation ---
-        pat_sequence = np.full_like(ppg, fill_value=np.nan)
-        if len(r_peaks) > 0 and len(ppg_feet) > 0:
-            pat_values = []
-            corresponding_r_peaks = []
-            for r_peak in r_peaks:
-                following_feet = ppg_feet[ppg_feet > r_peak]
-                if len(following_feet) > 0:
-                    pat = (following_feet[0] - r_peak) / sampling_rate
-                    if PAT_MIN <= pat <= PAT_MAX:
-                        pat_values.append(pat)
-                        corresponding_r_peaks.append(r_peak)
-            if len(pat_values) > 1:
-                interp_func = interp1d(
-                    corresponding_r_peaks, pat_values, 
-                    kind='linear', bounds_error=False, fill_value='extrapolate'
-                )
-                pat_sequence = interp_func(np.arange(len(ppg)))
-                pat_sequence = np.clip(pat_sequence, PAT_MIN, PAT_MAX)
+        if len(pat_values) > 1:
+            # Safe interpolation with constant boundary values
+            interp_pat = interp1d(
+                corresponding_times, pat_values, 
+                kind='linear', 
+                bounds_error=False, 
+                fill_value=(pat_values[0], pat_values[-1])
+            )
+            pat_sequence = interp_pat(np.arange(len(ppg)))
+            pat_sequence = np.clip(pat_sequence, PAT_MIN, PAT_MAX)
+        else:
+            # Not enough valid PAT measurements
+            pat_sequence = np.full(len(ppg), (PAT_MIN + PAT_MAX) / 2)
+        
         all_pat_sequences.append(pat_sequence)
 
     pat_sequences = np.array(all_pat_sequences)
     hr_sequences = np.array(all_hr_sequences)
+    quality_mask = np.array(quality_mask)
 
-    # Fill remaining NaNs by forward/backward fill
-    pat_sequences = pd.DataFrame(pat_sequences).ffill(axis=1).bfill(axis=1).to_numpy()
-    hr_sequences = pd.DataFrame(hr_sequences).ffill(axis=1).bfill(axis=1).to_numpy()
+    print(f"   - PAT sequences: {pat_sequences.shape}")
+    print(f"   - HR sequences: {hr_sequences.shape}")
+    print(f"   - Valid windows: {quality_mask.sum()}/{len(quality_mask)} ({100*quality_mask.mean():.1f}%)")
     
-    # Final safety check: If any NaN values remain (e.g., entire sequence was NaN),
-    # replace with reasonable defaults
-    if np.any(np.isnan(pat_sequences)):
-        # For PAT, use median of valid values or middle of range
-        valid_pat = pat_sequences[~np.isnan(pat_sequences)]
-        if len(valid_pat) > 0:
-            default_pat = np.median(valid_pat)
-        else:
-            default_pat = (PAT_MIN + PAT_MAX) / 2  # Middle of valid range
-        pat_sequences = np.nan_to_num(pat_sequences, nan=default_pat)
-        print(f"   - Warning: Replaced remaining PAT NaNs with {default_pat:.3f}s")
+    if quality_mask.sum() < len(quality_mask) * 0.5:
+        print("   ⚠️  WARNING: <50% of windows have good signal quality!")
     
-    if np.any(np.isnan(hr_sequences)):
-        # For HR, use median of valid values or middle of range
-        valid_hr = hr_sequences[~np.isnan(hr_sequences)]
-        if len(valid_hr) > 0:
-            default_hr = np.median(valid_hr)
-        else:
-            default_hr = (HR_MIN + HR_MAX) / 2  # Middle of valid range
-        hr_sequences = np.nan_to_num(hr_sequences, nan=default_hr)
-        print(f"   - Warning: Replaced remaining HR NaNs with {default_hr:.1f} bpm")
-
-    print(f"   - PAT sequences created with shape: {pat_sequences.shape}")
-    print(f"   - HR sequences created with shape: {hr_sequences.shape}")
-    return pat_sequences, hr_sequences, all_peak_indices
+    return pat_sequences, hr_sequences, quality_mask
 
 
 def standardize_feature_length(feature_sequences, target_length=TARGET_LENGTH):
@@ -135,14 +181,9 @@ def create_baseline_features(pat_sequences, hr_sequences, labels):
     pat_sequences = np.asarray(pat_sequences)
     hr_sequences = np.asarray(hr_sequences)
     
-    # Check for NaN/Inf values in inputs
-    if np.any(np.isnan(pat_sequences)) or np.any(np.isinf(pat_sequences)):
-        print("   - Warning: NaN or Inf found in PAT sequences. Filling with 0.")
-        pat_sequences = np.nan_to_num(pat_sequences)
-        
-    if np.any(np.isnan(hr_sequences)) or np.any(np.isinf(hr_sequences)):
-        print("   - Warning: NaN or Inf found in HR sequences. Filling with 0.")
-        hr_sequences = np.nan_to_num(hr_sequences)
+    # Handle any remaining NaN/Inf
+    pat_sequences = np.nan_to_num(pat_sequences, nan=0.0, posinf=PAT_MAX, neginf=PAT_MIN)
+    hr_sequences = np.nan_to_num(hr_sequences, nan=0.0, posinf=HR_MAX, neginf=HR_MIN)
 
     mean_pat = np.mean(pat_sequences, axis=1)
     std_pat = np.std(pat_sequences, axis=1)
@@ -169,3 +210,70 @@ def create_4_channel_input(raw_signals, pat_sequences, hr_sequences):
     print(f"   - 4-channel input created with shape: {X_phys_informed.shape}")
 
     return X_phys_informed
+
+
+def normalize_pat_subject_wise(pat_sequences, patient_ids, train_mask):
+    """
+    Normalize PAT per patient using mean and std computed from TRAIN data only.
+    Apply the same normalization parameters for validation and test data.
+    
+    This prevents data leakage by ensuring normalization statistics are only computed
+    from training data for each patient.
+    
+    Args:
+        pat_sequences: Array of PAT sequences (n_samples, timesteps)
+        patient_ids: Array of patient IDs for each sample
+        train_mask: Boolean mask indicating training samples
+        
+    Returns:
+        normalized_pat: Subject-wise normalized PAT sequences
+        pat_stats: Dictionary {patient_id: {'mean': float, 'std': float}}
+    """
+    print("🔄 Normalizing PAT per patient using training data only...")
+    
+    normalized_pat = np.zeros_like(pat_sequences)
+    pat_stats = {}
+    
+    # First pass: compute statistics from training data only
+    train_patient_ids = patient_ids[train_mask]
+    train_pat = pat_sequences[train_mask]
+    unique_train_patients = np.unique(train_patient_ids)
+    
+    for patient_id in unique_train_patients:
+        patient_train_mask = train_patient_ids == patient_id
+        patient_train_pat = train_pat[patient_train_mask]
+        
+        # Compute mean and std across all time points and samples for this patient
+        mean = np.mean(patient_train_pat)
+        std = np.std(patient_train_pat)
+        
+        # Avoid division by zero
+        if std < 1e-8:
+            std = 1.0
+        
+        pat_stats[patient_id] = {'mean': mean, 'std': std}
+    
+    # Compute global statistics as fallback for patients not in training set
+    global_mean = np.mean(train_pat)
+    global_std = np.std(train_pat)
+    if global_std < 1e-8:
+        global_std = 1.0
+    
+    print(f"   - Computed PAT statistics for {len(pat_stats)} training patients")
+    print(f"   - Global PAT stats: mean={global_mean:.4f}, std={global_std:.4f}")
+    
+    # Second pass: apply normalization to all samples
+    for i, patient_id in enumerate(patient_ids):
+        if patient_id in pat_stats:
+            # Use patient-specific statistics
+            mean = pat_stats[patient_id]['mean']
+            std = pat_stats[patient_id]['std']
+        else:
+            # For validation/test patients not in training set, use global statistics
+            mean = global_mean
+            std = global_std
+        
+        normalized_pat[i] = (pat_sequences[i] - mean) / std
+    
+    print(f"   - PAT normalization complete")
+    return normalized_pat, pat_stats

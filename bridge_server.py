@@ -98,7 +98,8 @@ class BloodPressurePredictor:
         try:
             self.model = tf.keras.models.load_model(
                 self.model_path,
-                custom_objects={'huber_loss': tf.keras.losses.Huber(delta=1.0)}
+                custom_objects={'huber_loss': tf.keras.losses.Huber(delta=1.0)},
+                safe_mode=False  # Allow loading Lambda layers
             )
             logger.info("✓ Model loaded successfully")
             return True
