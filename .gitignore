@@ -2,7 +2,6 @@
 data/
 checkpoints/
 node_modules/
-venv
 
 __pycache__/
 *.pyc
@@ -29,4 +28,3 @@ temp/
 scripts/*.csv
 ppg_stream.csv
 bp_predictions.csv
-.DS_Store
