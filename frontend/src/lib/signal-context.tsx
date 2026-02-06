@@ -98,6 +98,10 @@ export function SignalProvider({ children }: { children: React.ReactNode }) {
       } else if (data.signalType === "ECG") {
         ecgBuffer.addSample(data.timestamp, data.value)
       }
+      // Update HR from backend if available
+      if ((data as any).heart_rate && (data as any).heart_rate > 0) {
+        setCurrentHeartRate(Math.round((data as any).heart_rate))
+      }
     })
 
     const unsubStatus = wsManager.onStatusChange((status: ConnectionStatus) => {

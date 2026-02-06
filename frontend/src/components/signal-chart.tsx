@@ -9,9 +9,10 @@ interface SignalChartProps {
   label: string
   yMin: number
   yMax: number
+  displayScale?: number  // Optional scale multiplier for display only
 }
 
-export function SignalChart({ buffer, color, label, yMin, yMax }: SignalChartProps) {
+export function SignalChart({ buffer, color, label, yMin, yMax, displayScale = 1 }: SignalChartProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const animationRef = useRef<number>()
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 })
@@ -127,7 +128,7 @@ export function SignalChart({ buffer, color, label, yMin, yMax }: SignalChartPro
       const timeRange = Math.max(1, lastTs - firstTs)
 
       // Auto-scale Y based on data, but respect provided yMin/yMax as soft bounds
-      const values = data.map((p) => p.value)
+      const values = data.map((p) => p.value * displayScale)  // Apply display scaling
       const dataMin = Math.min(...values)
       const dataMax = Math.max(...values)
       const effectiveMin = Math.min(yMin, dataMin)
@@ -142,7 +143,8 @@ export function SignalChart({ buffer, color, label, yMin, yMax }: SignalChartPro
 
       data.forEach((point, index) => {
         const x = ((point.timestamp - firstTs) / timeRange) * displayWidth
-        const y = displayHeight - ((point.value - effectiveMin) / valueRange) * displayHeight
+        const scaledValue = point.value * displayScale  // Apply display scaling
+        const y = displayHeight - ((scaledValue - effectiveMin) / valueRange) * displayHeight
 
         if (index === 0) {
           ctx.moveTo(x, y)
@@ -160,7 +162,8 @@ export function SignalChart({ buffer, color, label, yMin, yMax }: SignalChartPro
         const peakData = data.find((d) => d.timestamp === peakTime)
         if (peakData) {
           const x = ((peakData.timestamp - firstTs) / timeRange) * displayWidth
-          const y = displayHeight - ((peakData.value - effectiveMin) / valueRange) * displayHeight
+          const scaledValue = peakData.value * displayScale  // Apply display scaling
+          const y = displayHeight - ((scaledValue - effectiveMin) / valueRange) * displayHeight
           ctx.beginPath()
           ctx.arc(x, y, 4, 0, 2 * Math.PI)
           ctx.fill()

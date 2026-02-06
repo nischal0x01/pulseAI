@@ -8,13 +8,14 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import sys
 import os
+import glob
+import h5py
 from pathlib import Path
 
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src', 'models'))
 
 import tensorflow as tf
-from data_loader import load_aggregate_data
 from preprocessing import preprocess_signals, create_subject_wise_splits
 from feature_engineering import extract_physiological_features, standardize_feature_length, normalize_pat_subject_wise, create_4_channel_input
 from utils import normalize_data
@@ -77,44 +78,37 @@ def analyze_patient(patient_id=None, checkpoint_path='checkpoints/best_model.h5'
     
     # Load data
     print("\n📊 Loading data...")
-    # Use correct path from root directory
     data_dir = 'data/processed'
-    result = load_aggregate_data(processed_dir=data_dir)
     
-    # Handle both return formats (with or without demographics)
-    if result is None or result[0] is None:
-        print("❌ Failed to load data!")
-        print(f"   Make sure data exists in: {data_dir}")
-        return
-    
-    if len(result) == 5:
-        signals_agg, y_sbp, y_dbp, demographics_agg, patient_ids_agg = result
-    elif len(result) == 4:
-        signals_agg, y_sbp, y_dbp, patient_ids_agg = result
-    else:
-        print(f"❌ Unexpected return format from load_aggregate_data(): {len(result)} values")
-        return
-    
-    # Get unique patients
-    unique_patients = np.unique(patient_ids_agg)
-    print(f"   - Total patients: {len(unique_patients)}")
-    print(f"   - Available: {', '.join(unique_patients)}")
-    
-    # Select patient
+    # If patient_id is not specified, list available patients and pick one
     if patient_id is None:
-        # Use the last patient (likely in test set)
-        patient_id = unique_patients[-1]
-    
-    if patient_id not in unique_patients:
-        print(f"❌ Patient {patient_id} not found!")
-        return
+        # Just list available patient files
+        import glob
+        patient_files = sorted(glob.glob(os.path.join(data_dir, 'p*.mat')))
+        if not patient_files:
+            print(f"❌ No patient data found in {data_dir}")
+            return
+        unique_patients = [Path(f).stem for f in patient_files]
+        print(f"   - Available patients: {', '.join(unique_patients[:5])}...")
+        patient_id = unique_patients[-1]  # Use the last one
     
     print(f"\n🔍 Analyzing patient: {patient_id}")
     
-    # Get patient data
-    patient_mask = patient_ids_agg == patient_id
-    n_samples = patient_mask.sum()
-    print(f"   - Samples: {n_samples}")
+    # Load only this patient's data using the same function from data_loader
+    from data_loader import _read_subj_wins
+    patient_file = os.path.join(data_dir, f"{patient_id}.mat")
+    if not os.path.exists(patient_file):
+        print(f"❌ Patient file not found: {patient_file}")
+        return
+    
+    print(f"   - Loading single patient file: {patient_file}")
+    try:
+        signals_agg, y_sbp, y_dbp, demographics = _read_subj_wins(patient_file)
+        n_samples = len(y_sbp)
+        print(f"   - Samples: {n_samples}")
+    except Exception as e:
+        print(f"❌ Failed to load patient data: {e}")
+        return
     
     # Preprocess
     print("\n🔄 Preprocessing signals...")
@@ -131,9 +125,12 @@ def analyze_patient(patient_id=None, checkpoint_path='checkpoints/best_model.h5'
     pat_seqs = standardize_feature_length(pat_seqs, target_len)
     hr_seqs = standardize_feature_length(hr_seqs, target_len)
     
+    # Create patient_ids array for this single patient
+    patient_ids = np.array([patient_id] * n_samples)
+    
     # Create train mask (we'll normalize using all data for simplicity in analysis)
-    train_mask = np.ones(len(patient_ids_agg), dtype=bool)
-    pat_seqs_scaled, _ = normalize_pat_subject_wise(pat_seqs, patient_ids_agg, train_mask)
+    train_mask = np.ones(n_samples, dtype=bool)
+    pat_seqs_scaled, _ = normalize_pat_subject_wise(pat_seqs, patient_ids, train_mask)
     
     # Normalize HR sequences using simple standardization (z-score)
     hr_mean = np.mean(hr_seqs)
@@ -143,11 +140,11 @@ def analyze_patient(patient_id=None, checkpoint_path='checkpoints/best_model.h5'
     # Create 4-channel input
     X_phys_informed = create_4_channel_input(processed_signals, pat_seqs_scaled, hr_seqs_scaled)
     
-    # Get patient data
-    X_patient = X_phys_informed[patient_mask]
-    y_sbp_patient = y_sbp[patient_mask]
-    y_dbp_patient = y_dbp[patient_mask]
-    quality_patient = quality_mask[patient_mask]
+    # All data is for this patient, so no masking needed
+    X_patient = X_phys_informed
+    y_sbp_patient = y_sbp
+    y_dbp_patient = y_dbp
+    quality_patient = quality_mask
     
     print(f"\n   - Valid samples: {quality_patient.sum()}/{len(quality_patient)}")
     

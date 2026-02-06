@@ -304,7 +304,8 @@ async def send_signal_data():
             "ppg_value": ppg_value,
             "ecg_value": ecg_value,
             "sample_rate": signal_gen.sample_rate,
-            "quality": quality
+            "quality": quality,
+            "heart_rate": signal_gen.heart_rate  # Add current heart rate
         }
     }
     
