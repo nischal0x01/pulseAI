@@ -7,7 +7,7 @@ import { useEffect, useState } from "react"
 import { Activity, Signal } from "lucide-react"
 
 export function SignalMetrics() {
-  const { ppgBuffer, ecgBuffer, currentHeartRate, signalQuality } = useSignal()
+  const { ppgBuffer, ecgBuffer, currentHeartRate, signalQuality, latestBP } = useSignal()
   const [ppgMetrics, setPpgMetrics] = useState({ estimatedSBP: 0, estimatedDBP: 0, lastRRInterval: 0 })
   const [ecgMetrics, setEcgMetrics] = useState({ estimatedSBP: 0, estimatedDBP: 0, lastRRInterval: 0 })
 
@@ -53,19 +53,19 @@ export function SignalMetrics() {
         progressColor={getQualityBg(signalQuality)}
       />
 
-      {/* Estimated BP from PPG */}
+      {/* BP from Model Prediction */}
       <MetricCard
         label="Estimated SBP (PPG)"
-        value={ppgMetrics.estimatedSBP > 0 ? Math.round(ppgMetrics.estimatedSBP).toString() : "--"}
+        value={latestBP ? Math.round(latestBP.sbp).toString() : "--"}
         unit="mmHg"
-        color="text-red-400"
+        color={latestBP && latestBP.sbp >= 140 ? "text-red-400" : latestBP && latestBP.sbp >= 130 ? "text-yellow-400" : "text-emerald-400"}
       />
 
       <MetricCard
         label="Estimated DBP (PPG)"
-        value={ppgMetrics.estimatedDBP > 0 ? Math.round(ppgMetrics.estimatedDBP).toString() : "--"}
+        value={latestBP ? Math.round(latestBP.dbp).toString() : "--"}
         unit="mmHg"
-        color="text-red-400"
+        color={latestBP && latestBP.dbp >= 90 ? "text-red-400" : latestBP && latestBP.dbp >= 80 ? "text-yellow-400" : "text-emerald-400"}
       />
 
       {/* Optional: show RR interval from ECG if desired */}

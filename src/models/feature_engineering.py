@@ -36,17 +36,27 @@ def bandpass_filter(data, lowcut=0.5, highcut=8.0, fs=SAMPLING_RATE, order=4):
     return filtfilt(b, a, data, padlen=min(len(data)-1, 3*max(len(b), len(a))))
 
 
-def extract_physiological_features(ecg_signals, ppg_signals, sampling_rate=SAMPLING_RATE):
+def extract_physiological_features(ecg_signals, ppg_signals, sampling_rate=SAMPLING_RATE, hr_from_sensor=None):
     """
     Extract PAT and HR using improved PPG foot detection with APG (2nd derivative).
     Includes signal quality check to handle noisy windows.
+    
+    Args:
+        ecg_signals: ECG signals array (n_samples, timesteps)
+        ppg_signals: PPG signals array (n_samples, timesteps)
+        sampling_rate: Sampling rate in Hz
+        hr_from_sensor: Optional pre-computed HR from sensor (n_samples, timesteps).
+                       If provided, will use this instead of extracting HR from ECG.
     
     Returns:
         pat_sequences: (n_samples, timesteps) array of PAT values
         hr_sequences: (n_samples, timesteps) array of HR values
         quality_mask: (n_samples,) boolean array indicating valid windows
     """
-    print("💓 Extracting robust physiological features (PAT, HR)...")
+    if hr_from_sensor is not None:
+        print("💓 Extracting physiological features (PAT from signals, HR from sensor)...")
+    else:
+        print("💓 Extracting robust physiological features (PAT, HR)...")
 
     all_pat_sequences = []
     all_hr_sequences = []
@@ -85,28 +95,39 @@ def extract_physiological_features(ecg_signals, ppg_signals, sampling_rate=SAMPL
         if len(r_peaks) < 2 or len(ppg_feet) < 2:
             quality_mask.append(False)
             # Fill with reasonable defaults
-            all_hr_sequences.append(np.full(len(ecg), (HR_MIN + HR_MAX) / 2))
+            if hr_from_sensor is not None:
+                # Use sensor-provided HR even for low quality signals
+                all_hr_sequences.append(hr_from_sensor[i])
+            else:
+                all_hr_sequences.append(np.full(len(ecg), (HR_MIN + HR_MAX) / 2))
             all_pat_sequences.append(np.full(len(ecg), (PAT_MIN + PAT_MAX) / 2))
             continue
         
         quality_mask.append(True)
 
-        # --- 3. HR Calculation with safe interpolation ---
-        instant_hr = sampling_rate * 60.0 / np.diff(r_peaks)
-        instant_hr = np.clip(instant_hr, HR_MIN, HR_MAX)  # Clip before interpolation
-        
-        if len(r_peaks) > 1:
-            # Use constant fill values instead of extrapolation
-            interp_hr = interp1d(
-                r_peaks[1:], instant_hr, 
-                kind='linear', 
-                bounds_error=False, 
-                fill_value=(instant_hr[0], instant_hr[-1])
-            )
-            hr_sequence = interp_hr(np.arange(len(ecg)))
+        # --- 3. HR Calculation ---
+        if hr_from_sensor is not None:
+            # Use HR directly from sensor
+            hr_sequence = hr_from_sensor[i]
+            # Validate and clip sensor HR to physiological range
             hr_sequence = np.clip(hr_sequence, HR_MIN, HR_MAX)
         else:
-            hr_sequence = np.full(len(ecg), (HR_MIN + HR_MAX) / 2)
+            # Extract HR from ECG with safe interpolation
+            instant_hr = sampling_rate * 60.0 / np.diff(r_peaks)
+            instant_hr = np.clip(instant_hr, HR_MIN, HR_MAX)  # Clip before interpolation
+            
+            if len(r_peaks) > 1:
+                # Use constant fill values instead of extrapolation
+                interp_hr = interp1d(
+                    r_peaks[1:], instant_hr, 
+                    kind='linear', 
+                    bounds_error=False, 
+                    fill_value=(instant_hr[0], instant_hr[-1])
+                )
+                hr_sequence = interp_hr(np.arange(len(ecg)))
+                hr_sequence = np.clip(hr_sequence, HR_MIN, HR_MAX)
+            else:
+                hr_sequence = np.full(len(ecg), (HR_MIN + HR_MAX) / 2)
         
         all_hr_sequences.append(hr_sequence)
 
@@ -145,6 +166,10 @@ def extract_physiological_features(ecg_signals, ppg_signals, sampling_rate=SAMPL
 
     print(f"   - PAT sequences: {pat_sequences.shape}")
     print(f"   - HR sequences: {hr_sequences.shape}")
+    if hr_from_sensor is not None:
+        print(f"   - HR source: Sensor (direct)")
+    else:
+        print(f"   - HR source: Extracted from ECG")
     print(f"   - Valid windows: {quality_mask.sum()}/{len(quality_mask)} ({100*quality_mask.mean():.1f}%)")
     
     if quality_mask.sum() < len(quality_mask) * 0.5:

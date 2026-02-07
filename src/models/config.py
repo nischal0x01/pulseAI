@@ -13,7 +13,7 @@ tf.random.set_seed(RANDOM_SEED)
 
 # Training configuration
 EPOCHS = 100
-BATCH_SIZE = 32
+BATCH_SIZE = 16
 VERBOSE = 1
 LEARNING_RATE = 1e-3  # Lower learning rate for LSTM stability
 GRADIENT_CLIP_NORM = 1.0  # Gradient clipping for LSTM stability
@@ -48,15 +48,22 @@ PAT_MAX = 0.5  # seconds
 R_PEAK_HEIGHT_MULTIPLIER = 1.5
 MIN_R_PEAK_DISTANCE_MULTIPLIER = 60 / 80  # ~80 bpm minimum
 
-# Model configuration - CNN-LSTM with Attention
-CONV1D_FILTERS_1 = 64
-CONV1D_FILTERS_2 = 128
+# Model configuration - CNN-LSTM with Attention (Reduced for laptop training)
+CONV1D_FILTERS_1 = 64 
+CONV1D_FILTERS_2 = 128 
 CONV1D_KERNEL_SIZE = 5
-LSTM_UNITS_1 = 128
-LSTM_UNITS_2 = 64
-ATTENTION_UNITS = 64  # For PAT-based attention mechanism
-DENSE_UNITS = 64
+LSTM_UNITS_1 = 128 
+LSTM_UNITS_2 = 64 
+ATTENTION_UNITS = 64  
+DENSE_UNITS = 64 
 DROPOUT_RATE = 0.3
+
+# Weighted loss configuration
+SBP_LOSS_WEIGHT = 2.0  # SBP weighted 3x more than DBP (increased for better focus)
+EXTREME_BP_WEIGHT = 3.0  # High/Low BP weighted 5x more than normal BP (increased)
+
+# Checkpoint resumption configuration  
+RESUME_LR_REDUCTION_FACTOR = 0.5  # Reduce LR by 50% when resuming
 
 # Paths configuration
 # Use environment variable SCRATCH for HPC systems, otherwise use project directory

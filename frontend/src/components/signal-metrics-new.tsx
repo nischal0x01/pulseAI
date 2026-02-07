@@ -7,7 +7,7 @@ import { useEffect, useState } from "react"
 import { Activity, Signal, Heart, TrendingUp } from "lucide-react"
 
 export function SignalMetrics() {
-  const { ppgBuffer, ecgBuffer, currentHeartRate, signalQuality } = useSignal()
+  const { ppgBuffer, ecgBuffer, currentHeartRate, signalQuality, latestBP } = useSignal()
   const [ppgMetrics, setPpgMetrics] = useState({ 
     heartRate: 0,
     signalQuality: 0,
@@ -59,9 +59,9 @@ export function SignalMetrics() {
       <MetricCard
         icon={Heart}
         label="Blood Pressure"
-        value={ppgMetrics.estimatedSBP > 0 ? `${ppgMetrics.estimatedSBP}/${ppgMetrics.estimatedDBP}` : "--/--"}
+        value={latestBP ? `${Math.round(latestBP.sbp)}/${Math.round(latestBP.dbp)}` : "--/--"}
         unit="mmHg"
-        color={getBPColor(ppgMetrics.estimatedSBP, ppgMetrics.estimatedDBP)}
+        color={latestBP ? getBPColor(latestBP.sbp, latestBP.dbp) : "text-gray-500"}
       />
 
       <MetricCard

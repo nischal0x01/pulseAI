@@ -63,7 +63,7 @@ PPG_SAMPLE_RATE = 200
 MODEL_SAMPLE_RATE = 125
 DOWNSAMPLE_FACTOR = PPG_SAMPLE_RATE // MODEL_SAMPLE_RATE
 BUFFER_SIZE = int(WINDOW_SIZE * (PPG_SAMPLE_RATE / MODEL_SAMPLE_RATE))
-UPDATE_INTERVAL = 250
+UPDATE_INTERVAL = 100  # Predict every 100 samples (0.5 seconds at 200Hz)
 
 app = FastAPI(title="BP WebSocket Bridge", version="1.0.0")
 
@@ -111,10 +111,16 @@ class BloodPressurePredictor:
         """Downsample signal."""
         return signal[::int(DOWNSAMPLE_FACTOR)]
     
-    def preprocess_window(self, ppg_window, ecg_window):
+    def preprocess_window(self, ppg_window, ecg_window, hr_data=None):
         """
         Preprocess PPG and ECG windows for model input.
         Returns 4-channel input: [ECG, PPG, PAT, HR]
+        
+        Args:
+            ppg_window: PPG signal data
+            ecg_window: ECG signal data
+            hr_data: Optional heart rate data from sensor (array of HR values).
+                    If provided, will use this instead of extracting HR from ECG.
         """
         # Downsample to model's sample rate
         ppg_downsampled = self.downsample(ppg_window)
@@ -148,7 +154,22 @@ class BloodPressurePredictor:
             ecg_for_feat = ecg_norm[np.newaxis, :]
             ppg_for_feat = ppg_norm[np.newaxis, :]
             
-            pat_seqs, hr_seqs, _ = extract_physiological_features(ecg_for_feat, ppg_for_feat)
+            # Prepare HR from sensor if provided
+            hr_from_sensor = None
+            if hr_data is not None:
+                # Downsample and normalize HR data
+                hr_downsampled = self.downsample(hr_data)
+                if len(hr_downsampled) < WINDOW_SIZE:
+                    padding = WINDOW_SIZE - len(hr_downsampled)
+                    hr_downsampled = np.pad(hr_downsampled, (0, padding), mode='edge')
+                elif len(hr_downsampled) > WINDOW_SIZE:
+                    hr_downsampled = hr_downsampled[:WINDOW_SIZE]
+                hr_from_sensor = hr_downsampled[np.newaxis, :]  # Shape: (1, WINDOW_SIZE)
+            
+            # Extract features, using sensor HR if available
+            pat_seqs, hr_seqs, _ = extract_physiological_features(
+                ecg_for_feat, ppg_for_feat, hr_from_sensor=hr_from_sensor
+            )
             pat_seqs = standardize_feature_length(pat_seqs, WINDOW_SIZE)
             hr_seqs = standardize_feature_length(hr_seqs, WINDOW_SIZE)
             
@@ -165,25 +186,43 @@ class BloodPressurePredictor:
             ecg_ch = ecg_norm.reshape(1, WINDOW_SIZE, 1)
             return np.concatenate([ecg_ch, ppg_ch, zeros, zeros], axis=2)
     
-    def predict(self, ppg_window, ecg_window):
+    def predict(self, ppg_window, ecg_window, hr_data=None):
         """
         Predict BP from PPG and ECG windows.
+        
+        Args:
+            ppg_window: PPG signal data
+            ecg_window: ECG signal data
+            hr_data: Optional heart rate data from sensor
+            
         Returns: (sbp, dbp) tuple
         """
         if self.model is None:
             return None, None
         
         try:
-            input_data = self.preprocess_window(ppg_window, ecg_window)
+            input_data = self.preprocess_window(ppg_window, ecg_window, hr_data)
             predictions = self.model.predict(input_data, verbose=0)
             
-            if predictions.shape[1] == 2:
-                sbp, dbp = predictions[0]
+            # Convert predictions to numpy array if it's a list
+            if isinstance(predictions, list):
+                predictions = np.array(predictions[0]) if len(predictions) == 1 else np.array(predictions)
+            
+            # Handle different prediction formats
+            if len(predictions.shape) == 1:
+                # Single output or flattened
+                if predictions.shape[0] >= 2:
+                    sbp, dbp = float(predictions[0]), float(predictions[1])
+                else:
+                    sbp = float(predictions[0])
+                    dbp = sbp * 0.67
+            elif predictions.shape[1] == 2:
+                sbp, dbp = float(predictions[0, 0]), float(predictions[0, 1])
             else:
-                sbp = predictions[0, 0]
+                sbp = float(predictions[0, 0])
                 dbp = sbp * 0.67
             
-            return float(sbp), float(dbp)
+            return sbp, dbp
         except Exception as e:
             logger.error(f"Prediction error: {e}")
             return None, None
@@ -331,14 +370,15 @@ class SerialReader:
                         logger.info(f"Serial data received: {line}")
                     
                     parts = line.split(',')
-                    if len(parts) != 3:  # timestamp,ppg_raw,ecg_raw
+                    if len(parts) not in [3, 4]:  # timestamp,ppg_raw,ecg_raw or timestamp,ppg_raw,ecg_raw,hr
                         if self._line_count <= 5:
-                            logger.warning(f"Expected 3 fields, got {len(parts)}: {line}")
+                            logger.warning(f"Expected 3-4 fields, got {len(parts)}: {line}")
                         continue
                     
-                    timestamp, ppg_raw, ecg_raw = parts
-                    ppg_raw = float(ppg_raw)
-                    ecg_raw = float(ecg_raw)
+                    timestamp = parts[0]
+                    ppg_raw = float(parts[1])
+                    ecg_raw = float(parts[2])
+                    heart_rate = float(parts[3]) if len(parts) == 4 else 0.0
                     
                     # Apply filtering
                     ppg_filtered = self.ppg_filter.filter(ppg_raw)
@@ -349,7 +389,8 @@ class SerialReader:
                         'ppg_raw': ppg_raw,
                         'ppg_filtered': ppg_filtered,
                         'ecg_raw': ecg_raw,
-                        'ecg_filtered': ecg_filtered
+                        'ecg_filtered': ecg_filtered,
+                        'heart_rate': heart_rate
                     }
                     
                     self.data_queue.put(data)
@@ -388,6 +429,7 @@ manager = ConnectionManager()
 predictor = None
 ppg_buffer = deque(maxlen=BUFFER_SIZE)
 ecg_buffer = deque(maxlen=BUFFER_SIZE)
+hr_buffer = deque(maxlen=BUFFER_SIZE)  # Buffer for sensor-provided heart rate
 sample_count = 0
 prediction_count = 0
 data_queue = queue.Queue()
@@ -429,9 +471,11 @@ async def broadcast_loop():
             
             ppg_filtered = data['ppg_filtered']
             ecg_filtered = data['ecg_filtered']
+            heart_rate = data.get('heart_rate', 0)
             
             ppg_buffer.append(ppg_filtered)
             ecg_buffer.append(ecg_filtered)
+            hr_buffer.append(heart_rate)
             sample_count += 1
             
             # Broadcast PPG and ECG signals
@@ -442,7 +486,8 @@ async def broadcast_loop():
                     'ppg_value': ppg_filtered,
                     'ecg_value': ecg_filtered,
                     'sample_rate': PPG_SAMPLE_RATE,
-                    'quality': 0.85
+                    'quality': 0.85,
+                    'heart_rate': heart_rate
                 }
             })
             
@@ -451,13 +496,22 @@ async def broadcast_loop():
                 if predictor and predictor.model:
                     ppg_window = np.array(list(ppg_buffer))
                     ecg_window = np.array(list(ecg_buffer))
-                    sbp, dbp = predictor.predict(ppg_window, ecg_window)
+                    
+                    # Use sensor HR if available and non-zero
+                    hr_window = None
+                    if len(hr_buffer) >= BUFFER_SIZE:
+                        hr_array = np.array(list(hr_buffer))
+                        # Only use sensor HR if values are reasonable (non-zero)
+                        if np.mean(hr_array) > 0:
+                            hr_window = hr_array
+                    
+                    sbp, dbp = predictor.predict(ppg_window, ecg_window, hr_window)
                     
                     if sbp is not None and dbp is not None:
                         prediction_count += 1
                         
                         # Broadcast BP prediction
-                        await manager.broadcast({
+                        bp_message = {
                             'type': 'bp_prediction',
                             'payload': {
                                 'sbp': round(sbp, 1),
@@ -466,9 +520,10 @@ async def broadcast_loop():
                                 'confidence': 0.85,
                                 'prediction_count': prediction_count
                             }
-                        })
+                        }
+                        await manager.broadcast(bp_message)
                         
-                        logger.info(f"[{prediction_count:3d}] BP: {sbp:6.1f}/{dbp:5.1f} mmHg")
+                        logger.info(f"[{prediction_count:3d}] BP: {sbp:6.1f}/{dbp:5.1f} mmHg (sent to {len(manager.active_connections)} clients)")
         
         except Exception as e:
             logger.error(f"Broadcast loop error: {e}")
@@ -519,7 +574,9 @@ async def root():
         "model_loaded": predictor.model is not None if predictor else False,
         "connections": len(manager.active_connections),
         "samples": sample_count,
-        "predictions": prediction_count
+        "predictions": prediction_count,
+        "queue_size": data_queue.qsize(),
+        "serial_reader_alive": serial_reader.is_alive() if serial_reader else False
     }
 
 

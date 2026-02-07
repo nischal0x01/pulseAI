@@ -93,10 +93,15 @@ class BloodPressurePredictor:
             ecg_sim = ecg_sim / np.std(ecg_sim) * 0.5
         return ecg_sim
     
-    def preprocess_window(self, ppg_window):
+    def preprocess_window(self, ppg_window, hr_data=None):
         """
         Preprocess PPG window for model input.
         Returns 4-channel input: [ECG, PPG, PAT, HR]
+        
+        Args:
+            ppg_window: PPG signal data
+            hr_data: Optional heart rate data from sensor (array of HR values).
+                    If provided, will use this instead of extracting HR from ECG.
         """
         # Downsample to model's sample rate
         ppg_downsampled = self.downsample(ppg_window)
@@ -132,7 +137,22 @@ class BloodPressurePredictor:
             ecg_for_feat = ecg_norm[np.newaxis, :]  # (1, 875)
             ppg_for_feat = ppg_norm[np.newaxis, :]  # (1, 875)
             
-            pat_seqs, hr_seqs, _ = extract_physiological_features(ecg_for_feat, ppg_for_feat)
+            # Prepare HR from sensor if provided
+            hr_from_sensor = None
+            if hr_data is not None:
+                # Downsample and normalize HR data
+                hr_downsampled = self.downsample(hr_data)
+                if len(hr_downsampled) < WINDOW_SIZE:
+                    padding = WINDOW_SIZE - len(hr_downsampled)
+                    hr_downsampled = np.pad(hr_downsampled, (0, padding), mode='edge')
+                elif len(hr_downsampled) > WINDOW_SIZE:
+                    hr_downsampled = hr_downsampled[:WINDOW_SIZE]
+                hr_from_sensor = hr_downsampled[np.newaxis, :]  # Shape: (1, WINDOW_SIZE)
+            
+            # Extract features, using sensor HR if available
+            pat_seqs, hr_seqs, _ = extract_physiological_features(
+                ecg_for_feat, ppg_for_feat, hr_from_sensor=hr_from_sensor
+            )
             
             # Standardize PAT and HR to same length
             pat_seqs = standardize_feature_length(pat_seqs, WINDOW_SIZE)
@@ -156,14 +176,19 @@ class BloodPressurePredictor:
             ecg_ch = ecg_norm.reshape(1, WINDOW_SIZE, 1)
             return np.concatenate([ecg_ch, ppg_ch, zeros, zeros], axis=2)
     
-    def predict(self, ppg_window):
+    def predict(self, ppg_window, hr_data=None):
         """
         Predict SBP and DBP from PPG window.
+        
+        Args:
+            ppg_window: PPG signal data
+            hr_data: Optional heart rate data from sensor
+            
         Returns: (sbp, dbp) tuple
         """
         try:
             # Preprocess
-            input_data = self.preprocess_window(ppg_window)
+            input_data = self.preprocess_window(ppg_window, hr_data)
             
             # Predict
             predictions = self.model.predict(input_data, verbose=0)
@@ -268,6 +293,7 @@ def main():
     
     # Data buffers
     ppg_buffer = deque(maxlen=BUFFER_SIZE)
+    hr_buffer = deque(maxlen=BUFFER_SIZE)  # Buffer for sensor-provided heart rate
     sbp_history = []
     dbp_history = []
     sample_count = 0
@@ -296,14 +322,17 @@ def main():
                         continue
                     
                     parts = line.split(',')
-                    if len(parts) != 3:
+                    if len(parts) not in [3, 4]:  # timestamp,ir_raw,filtered or timestamp,ir_raw,filtered,hr
                         continue
                     
-                    timestamp, ir_raw, filtered = parts
+                    timestamp, ir_raw, filtered = parts[0:3]
                     filtered_value = float(filtered)
+                    heart_rate = float(parts[3]) if len(parts) == 4 else None
                     
-                    # Add to buffer
+                    # Add to buffers
                     ppg_buffer.append(filtered_value)
+                    if heart_rate is not None:
+                        hr_buffer.append(heart_rate)
                     sample_count += 1
                     
                     # Update PPG plot
@@ -318,8 +347,16 @@ def main():
                     if len(ppg_buffer) >= BUFFER_SIZE and sample_count % UPDATE_INTERVAL == 0:
                         ppg_window = np.array(list(ppg_buffer))
                         
+                        # Prepare HR data if available
+                        hr_window = None
+                        if len(hr_buffer) >= BUFFER_SIZE:
+                            hr_array = np.array(list(hr_buffer))
+                            # Only use sensor HR if values are reasonable (non-zero)
+                            if np.mean(hr_array) > 0:
+                                hr_window = hr_array
+                        
                         # Predict
-                        sbp, dbp = predictor.predict(ppg_window)
+                        sbp, dbp = predictor.predict(ppg_window, hr_window)
                         
                         if sbp is not None and dbp is not None:
                             prediction_count += 1

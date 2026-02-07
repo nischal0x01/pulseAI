@@ -15,6 +15,7 @@ export interface SignalPacket {
     ecg_value?: number
     sample_rate: number
     quality: number
+    heart_rate?: number
   }
 }
 
@@ -139,29 +140,16 @@ export class WebSocketManager {
       }
 
       this.ws.onerror = (error) => {
-        console.error("[v0] WebSocket error:", {
-          error: error,
-          message: error instanceof Event ? 'Connection failed - check if server is running' : String(error),
+        // Only log meaningful errors, suppress connection attempts during startup
+        if (this.ws?.readyState === WebSocket.CONNECTING) {
+          console.log("[v0] Attempting to connect to bridge server...")
+          return
+        }
+        
+        console.warn("[v0] WebSocket error:", {
+          message: 'Connection issue - check if bridge server is running',
           url: this.url,
-          readyState: this.ws?.readyState,
-          readyStateText: this.getReadyStateText(this.ws?.readyState),
-          timestamp: new Date().toISOString(),
-          errorType: error.constructor.name,
-          troubleshooting: {
-            possibleCauses: [
-              'ESP32 device not connected or powered on',
-              'Incorrect IP address or port',
-              'Network connectivity issues',
-              'WebSocket server not running on ESP32',
-              'Firewall blocking connection'
-            ],
-            recommendations: [
-              'Check ESP32 device connection and power',
-              'Verify IP address and port in settings',
-              'Ensure ESP32 and client are on same network',
-              'Check ESP32 WebSocket server code is running'
-            ]
-          }
+          readyState: this.getReadyStateText(this.ws?.readyState)
         })
         this.updateStatus("error")
       }
@@ -237,7 +225,7 @@ export class WebSocketManager {
       return
     }
 
-    const { timestamp, ppg_value, ecg_value, quality } = packet.payload
+    const { timestamp, ppg_value, ecg_value, quality, heart_rate } = packet.payload
 
     if (ppg_value !== undefined) {
       this.emitSignal({
@@ -245,7 +233,8 @@ export class WebSocketManager {
         signalType: "PPG",
         value: ppg_value,
         quality,
-      })
+        ...(heart_rate && { heart_rate })
+      } as any)
     }
 
     if (ecg_value !== undefined) {
@@ -311,10 +300,11 @@ export class WebSocketManager {
     this.lastHeartbeat = Date.now()
     this.heartbeatInterval = setInterval(() => {
       const timeSinceLastHeartbeat = Date.now() - this.lastHeartbeat
-      if (timeSinceLastHeartbeat > 5000) {
-        console.warn("  No heartbeat received, connection may be stale")
+      if (timeSinceLastHeartbeat > 60000) {  // 60 seconds
+        console.warn("  No heartbeat received for 60s, connection may be stale")
+        // Don't disconnect, just warn - let the WebSocket handle actual disconnects
       }
-    }, 2000)
+    }, 10000)  // Check every 10 seconds
   }
 
   private stopHeartbeat(): void {

@@ -103,7 +103,7 @@ function MonitorDashboard() {
                 </div>
               </div>
               <div className="h-72 p-6">
-                <SignalChart buffer={ecgBuffer} color="#2563eb" label="ECG" yMin={-3} yMax={3} />
+                <SignalChart buffer={ecgBuffer} color="#2563eb" label="ECG" yMin={-3} yMax={3} displayScale={10} />
               </div>
             </div>
           </div>
