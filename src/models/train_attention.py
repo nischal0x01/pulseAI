@@ -73,7 +73,8 @@ from feature_engineering import (
 from augmentation import augment_high_bp_samples
 from model_builder_attention import (
     create_phys_informed_model,
-    create_attention_visualization_model
+    create_attention_visualization_model,
+    WeightedHuberLoss
 )
 from utils import _ensure_finite, _ensure_finite_1d, normalize_data
 from evaluation import comprehensive_evaluation, calculate_comprehensive_metrics, print_metrics
@@ -82,6 +83,74 @@ from evaluation import comprehensive_evaluation, calculate_comprehensive_metrics
 plt.style.use('seaborn-v0_8')
 sns.set_palette("husl")
 plt.rcParams['figure.figsize'] = (12, 8)
+
+
+def get_data_hash():
+    """
+    Generate hash of processed data directory to detect new data additions.
+    Returns hash string and list of patient files.
+    """
+    import hashlib
+    
+    patient_files = []
+    for file in sorted(os.listdir(PROCESSED_DATA_DIR)):
+        if file.endswith('.mat'):
+            filepath = os.path.join(PROCESSED_DATA_DIR, file)
+            # Include filename and modified time in hash
+            patient_files.append(file)
+    
+    # Create hash from sorted file list
+    files_str = '|'.join(patient_files)
+    hash_obj = hashlib.md5(files_str.encode())
+    return hash_obj.hexdigest(), patient_files
+
+
+def detect_new_data(cache_path):
+    """
+    Detect if new patient data has been added since last cache.
+    Returns: (has_new_data, old_patients, new_patients, all_patients)
+    """
+    cache_metadata_path = os.path.join(CHECKPOINT_DIR, 'cache_metadata.json')
+    
+    current_hash, current_patients = get_data_hash()
+    
+    if not os.path.exists(cache_metadata_path):
+        return False, [], [], current_patients
+    
+    try:
+        with open(cache_metadata_path, 'r') as f:
+            metadata = json.load(f)
+        
+        cached_hash = metadata.get('data_hash', '')
+        cached_patients = set(metadata.get('patient_files', []))
+        current_patients_set = set(current_patients)
+        
+        if current_hash != cached_hash:
+            new_patients = list(current_patients_set - cached_patients)
+            old_patients = list(cached_patients)
+            
+            if new_patients:
+                return True, old_patients, new_patients, current_patients
+    except Exception as e:
+        print(f"   ⚠️ Failed to read cache metadata: {e}")
+    
+    return False, [], [], current_patients
+
+
+def save_cache_metadata(patient_files):
+    """Save metadata about cached data for transfer learning tracking."""
+    cache_metadata_path = os.path.join(CHECKPOINT_DIR, 'cache_metadata.json')
+    data_hash, _ = get_data_hash()
+    
+    metadata = {
+        'data_hash': data_hash,
+        'patient_files': patient_files,
+        'cache_date': datetime.now().isoformat(),
+        'num_patients': len(patient_files)
+    }
+    
+    with open(cache_metadata_path, 'w') as f:
+        json.dump(metadata, f, indent=2)
 
 
 def validate_data_integrity(data, name):
@@ -101,13 +170,71 @@ def validate_data_integrity(data, name):
 
 
 def main():
-    """Main training pipeline."""
+    """Main training pipeline with transfer learning support."""
     
-    # Check for cached preprocessed data
+    # Check for cached preprocessed data and detect new data
     cache_path = os.path.join(CHECKPOINT_DIR, 'preprocessed_data_cache.npz')
     use_cache = os.path.exists(cache_path)
     
-    if use_cache:
+    # Detect if new patient data has been added (Transfer Learning Mode)
+    has_new_data, old_patients, new_patients, all_patients = detect_new_data(cache_path)
+    
+    # Check actual patient count in data directory
+    actual_patient_count = len([f for f in os.listdir(PROCESSED_DATA_DIR) if f.endswith('.mat')])
+    
+    # If cache exists but metadata doesn't, force check by patient count
+    if use_cache and not has_new_data:
+        cache_metadata_path = os.path.join(CHECKPOINT_DIR, 'cache_metadata.json')
+        if os.path.exists(cache_metadata_path):
+            with open(cache_metadata_path, 'r') as f:
+                cached_count = json.load(f).get('num_patients', 0)
+            if actual_patient_count != cached_count:
+                print(f"\n⚠️  Patient count mismatch detected!")
+                print(f"   Cached: {cached_count} patients")
+                print(f"   Current: {actual_patient_count} patients")
+                has_new_data = True
+                new_patients = [f"(+{actual_patient_count - cached_count} new files)"]
+                old_patients = []
+        else:
+            # No metadata, but cache exists - assume data might have changed
+            print(f"\n⚠️  No cache metadata found. Current data: {actual_patient_count} patients")
+            print(f"   💡 To use new data, delete cache: rm {cache_path}")
+            user_input = input(f"   ❓ Force reprocess all data? (y/N): ")
+            if user_input.lower() == 'y':
+                has_new_data = True
+                use_cache = False
+    
+    if has_new_data and use_cache:
+        print("\n" + "="*70)
+        print("  🔄 TRANSFER LEARNING MODE: NEW DATA DETECTED")
+        print("="*70)
+        print(f"\n📊 Data Status:")
+        print(f"   - Previous patients: {len(old_patients)}")
+        print(f"   - New patients added: {len(new_patients) if isinstance(new_patients, list) else 'Unknown'}")
+        print(f"   - Total patients: {actual_patient_count}")
+        if new_patients and isinstance(new_patients, list) and new_patients[0].startswith('(+'):
+            print(f"\n🆕 New patient files: {new_patients[0]}")
+        else:
+            print(f"\n🆕 New patient files:")
+            for i, patient in enumerate(new_patients[:10], 1):  # Show first 10
+                print(f"   {i}. {patient}")
+            if len(new_patients) > 10:
+                print(f"   ... and {len(new_patients) - 10} more")
+        
+        print(f"\n💡 Transfer Learning Strategy:")
+        print(f"   1. Load existing model checkpoint (preserves learned weights)")
+        print(f"   2. Process new patient data")
+        print(f"   3. Combine with cached training data")
+        print(f"   4. Continue training on expanded dataset")
+        print(f"   5. Model will adapt to new patterns while retaining knowledge\n")
+        
+        # Force reprocessing to include new data
+        use_cache = False
+        transfer_learning_mode = True
+    else:
+        transfer_learning_mode = False
+    
+    if use_cache and not has_new_data:
         print("\n" + "="*70)
         print("  📦 LOADING CACHED PREPROCESSED DATA")
         print("="*70)
@@ -141,6 +268,14 @@ def main():
             print(f"   X_test: {X_test_phys.shape}")
             print(f"   y_test_sbp: {y_test_sbp.shape}, y_test_dbp: {y_test_dbp.shape}")
             print(f"   ✅ Verified 4 channels: [ECG, PPG, PAT, HR]")
+            
+            # Save cache metadata to track what's cached (for transfer learning detection)
+            _, current_patients = get_data_hash()
+            cache_metadata_path = os.path.join(CHECKPOINT_DIR, 'cache_metadata.json')
+            if not os.path.exists(cache_metadata_path):
+                print(f"\n💾 Saving cache metadata for future transfer learning detection...")
+                save_cache_metadata(current_patients)
+                print(f"   ✅ Metadata saved (tracking {len(current_patients)} patients)")
             
         except Exception as e:
             print(f"\n⚠️  Failed to load cache: {e}")
@@ -295,7 +430,7 @@ def main():
             
             # Report results
             n_high_bp_after = (y_train_sbp > BP_THRESHOLD).sum()
-            n_total_after = len(y_train_phys)
+            n_total_after = len(y_train_sbp)
             print(f"   - Training set after augmentation: {n_high_bp_after}/{n_total_after} "
                   f"({100*n_high_bp_after/n_total_after:.1f}%) high BP samples")
             print(f"   ✅ Augmentation complete: {n_total_before} → {n_total_after} training samples")
@@ -331,6 +466,9 @@ def main():
         print(f"\n💾 STEP 7.5: Caching preprocessed data for future runs...")
         print(f"   Cache location: {cache_path}")
         
+        if transfer_learning_mode:
+            print(f"   🔄 Transfer Learning: Updating cache with new patient data")
+        
         try:
             np.savez_compressed(
                 cache_path,
@@ -350,7 +488,15 @@ def main():
             )
             cache_size_mb = os.path.getsize(cache_path) / (1024 * 1024)
             print(f"   ✅ Data cached successfully! ({cache_size_mb:.1f} MB)")
-            print(f"   ℹ️  Next run will skip data loading and preprocessing!")
+            
+            # Save cache metadata for transfer learning tracking
+            save_cache_metadata(all_patients)
+            print(f"   ✅ Cache metadata saved (tracking {len(all_patients)} patients)")
+            
+            if transfer_learning_mode:
+                print(f"   ℹ️  Cache updated with {len(new_patients)} new patients")
+            else:
+                print(f"   ℹ️  Next run will skip data loading and preprocessing!")
         except Exception as e:
             print(f"   ⚠️  Failed to cache data: {e}")
             print(f"   Training will continue normally...")
@@ -360,8 +506,20 @@ def main():
     phys_input_shape = (X_train_phys.shape[1], X_train_phys.shape[2])
     
     # Load or initialize training state
-    checkpoint_path = os.path.join(CHECKPOINT_DIR, 'best_model.h5')
-    checkpoint_state_path = os.path.join(CHECKPOINT_DIR, 'training_state.pkl')
+    # Check for both .keras (new) and .h5 (legacy) formats
+    checkpoint_path_new = os.path.abspath(os.path.join(CHECKPOINT_DIR, 'best_model.keras'))
+    checkpoint_path_old = os.path.abspath(os.path.join(CHECKPOINT_DIR, 'best_model.h5'))
+    
+    # Prefer new format, but use old if that's what exists
+    if os.path.exists(checkpoint_path_new):
+        checkpoint_path = checkpoint_path_new
+    elif os.path.exists(checkpoint_path_old):
+        checkpoint_path = checkpoint_path_old
+        print(f"\n💡 Using legacy .h5 checkpoint (will be migrated to .keras on next save)")
+    else:
+        checkpoint_path = checkpoint_path_new  # Default for saving
+    
+    checkpoint_state_path = os.path.abspath(os.path.join(CHECKPOINT_DIR, 'training_state.pkl'))
     
     training_state = {
         'total_epochs': 0,
@@ -407,24 +565,78 @@ def main():
     
     if is_resuming and os.path.exists(checkpoint_path):
         print(f"\n🔄 CHECKPOINT FOUND: Resuming training from {checkpoint_path}")
+        
+        # Try multiple loading strategies
+        load_success = False
+        
+        # Strategy 1: Load with by_name (most flexible)
         try:
-            phys_informed_model.load_weights(checkpoint_path)
+            phys_informed_model.load_weights(checkpoint_path, by_name=True, skip_mismatch=True)
+            print(f"   ✅ Weights loaded successfully (by_name=True)")
+            load_success = True
+        except Exception as e1:
+            print(f"   ⚠️  Strategy 1 failed (by_name=True): {type(e1).__name__}")
+            
+            # Strategy 2: Load full model with custom objects, then transfer weights
+            try:
+                from tensorflow.keras.models import load_model
+                loaded_model = load_model(
+                    checkpoint_path, 
+                    custom_objects={'WeightedHuberLoss': WeightedHuberLoss},
+                    compile=False
+                )
+                # Transfer weights from loaded model to new model
+                phys_informed_model.set_weights(loaded_model.get_weights())
+                print(f"   ✅ Weights loaded successfully (load_model + transfer)")
+                load_success = True
+                del loaded_model
+            except Exception as e2:
+                print(f"   ⚠️  Strategy 2 failed (load_model): {type(e2).__name__}")
+                
+                # Strategy 3: Load without by_name (exact match required)
+                try:
+                    phys_informed_model.load_weights(checkpoint_path)
+                    print(f"   ✅ Weights loaded successfully (exact match)")
+                    load_success = True
+                except Exception as e3:
+                    print(f"   ⚠️  Strategy 3 failed (exact match): {type(e3).__name__}")
+                    print(f"   💡 All loading strategies failed")
+                    print(f"   💡 Checkpoint may be corrupted or incompatible")
+        
+        if load_success:
+            # Verify weights loaded by checking predictions on validation set
+            print(f"\n   🔍 Verifying loaded weights...")
+            sample_preds = phys_informed_model.predict(X_val_phys[:100], verbose=0)
+            sample_sbp_mae = np.mean(np.abs(sample_preds[0].flatten() - y_val_sbp[:100]))
+            sample_dbp_mae = np.mean(np.abs(sample_preds[1].flatten() - y_val_dbp[:100]))
+            
+            print(f"   📊 Quick validation check (100 samples):")
+            print(f"      - SBP MAE: {sample_sbp_mae:.2f} mmHg")
+            print(f"      - DBP MAE: {sample_dbp_mae:.2f} mmHg")
+            
+            if sample_sbp_mae > 50 or sample_dbp_mae > 50:
+                print(f"   ⚠️  WARNING: Predictions are poor! Weights may not have loaded correctly.")
+                print(f"   💡 Expected MAE ~10-20 mmHg, got {sample_sbp_mae:.1f}/{sample_dbp_mae:.1f}")
+                user_input = input(f"   ❓ Continue anyway? (y/N): ")
+                if user_input.lower() != 'y':
+                    print(f"   ❌ Training aborted. Check checkpoint file.")
+                    return None, None, None
+            else:
+                print(f"   ✅ Weights verification passed! Model has learned patterns.")
             
             # Adjust learning rate based on number of reductions
             lr_reduction_count = training_state['lr_reduction_count']
             if lr_reduction_count < 3:
                 new_lr = initial_lr * (RESUME_LR_REDUCTION_FACTOR ** (lr_reduction_count + 1))
-                K.set_value(phys_informed_model.optimizer.learning_rate, new_lr)
-                print(f"   ✅ Weights loaded successfully")
+                # Use assign instead of set_value for Keras 3.x compatibility
+                phys_informed_model.optimizer.learning_rate.assign(new_lr)
                 print(f"   📉 Learning rate adjusted: {initial_lr:.2e} → {new_lr:.2e}")
                 print(f"   🔄 LR reduction #{lr_reduction_count + 1}")
                 training_state['lr_reduction_count'] += 1
             else:
-                print(f"   ✅ Weights loaded successfully")
                 print(f"   ⚠️ Already reduced LR {lr_reduction_count} times")
                 print(f"   📊 Keeping current learning rate: {initial_lr:.2e}")
-        except Exception as e:
-            print(f"   ⚠️  Failed to load checkpoint: {e}")
+        else:
             print(f"   🆕 Training from scratch instead")
             is_resuming = False
     else:
@@ -482,6 +694,23 @@ def main():
     # Create checkpoint directory
     os.makedirs(CHECKPOINT_DIR, exist_ok=True)
     
+    # Get previous best validation loss if resuming
+    previous_best_val_loss = training_state['best_val_loss'] if is_resuming else float('inf')
+    
+    if is_resuming and previous_best_val_loss != float('inf'):
+        print(f"   📊 Previous best validation loss: {previous_best_val_loss:.4f}")
+        print(f"   🎯 Will only save if validation loss < {previous_best_val_loss:.4f}")
+    
+    # Create custom ModelCheckpoint that respects previous best
+    class ResumeAwareModelCheckpoint(ModelCheckpoint):
+        """ModelCheckpoint that knows about previous training runs."""
+        
+        def __init__(self, *args, initial_best=None, **kwargs):
+            super().__init__(*args, **kwargs)
+            if initial_best is not None and initial_best != float('inf'):
+                self.best = initial_best
+                print(f"   ✅ ModelCheckpoint initialized with previous best: {self.best:.4f}")
+    
     callbacks_list = [
         # Early stopping to prevent overfitting
         EarlyStopping(
@@ -498,13 +727,14 @@ def main():
             min_lr=1e-7,
             verbose=1
         ),
-        # Save best model
-        ModelCheckpoint(
-            filepath=os.path.join(CHECKPOINT_DIR, 'best_model.h5'),
+        # Save best model (with awareness of previous best)
+        ResumeAwareModelCheckpoint(
+            filepath=os.path.join(CHECKPOINT_DIR, 'best_model.keras'),
             monitor='val_loss',
             save_best_only=True,
             save_weights_only=False,
-            verbose=1
+            verbose=1,
+            initial_best=previous_best_val_loss
         )
     ]
     
@@ -533,7 +763,10 @@ def main():
     print(f"   - Mode: {'RESUMED (fine-tuning)' if is_resuming else 'FRESH START'}")
     if ENABLE_TWO_PHASE_TRAINING and is_resuming:
         print(f"   - Two-phase: CNN frozen, LSTM+attention trainable")
-    print(f"   - Epochs: {EPOCHS}")
+    if is_resuming:
+        print(f"   - Continuing from epoch: {training_state['total_epochs'] + 1}")
+        print(f"   - Remaining epochs: {EPOCHS - training_state['total_epochs']}")
+    print(f"   - Total epochs target: {EPOCHS}")
     print(f"   - Batch size: {BATCH_SIZE}")
     print(f"   - Loss: Weighted Huber (extreme BP focused)")
     print(f"   - Sample weighting: ENABLED (8x for very low BP, 5x for high/low BP)")
@@ -546,10 +779,14 @@ def main():
     # Sample weighting is now built into WeightedHuberLoss
     # No need for separate sample_weight parameter
     
+    # Set initial_epoch to continue from where we left off
+    initial_epoch = training_state['total_epochs'] if is_resuming else 0
+    
     history = phys_informed_model.fit(
         X_train_phys,
         {'sbp_output': y_train_sbp, 'dbp_output': y_train_dbp},
         validation_data=(X_val_phys, {'sbp_output': y_val_sbp, 'dbp_output': y_val_dbp}),
+        initial_epoch=initial_epoch,
         epochs=EPOCHS,
         batch_size=BATCH_SIZE,
         callbacks=callbacks_list,
@@ -801,6 +1038,9 @@ def main():
         'total_epochs_all_runs': training_state['total_epochs'],
         'runs_completed': training_state['runs_completed'],
         'lr_reduction_count': training_state['lr_reduction_count'],
+        'transfer_learning_mode': transfer_learning_mode,
+        'num_patients': len(all_patients) if transfer_learning_mode or not use_cache else None,
+        'new_patients_added': len(new_patients) if transfer_learning_mode else 0,
         'final_metrics': {
             'validation': {
                 'sbp_mae': float(val_results['metrics']['sbp']['MAE']),
