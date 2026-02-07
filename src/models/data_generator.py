@@ -92,9 +92,12 @@ def _load_hdf5_mat_file(file_path):
             d = sw.get(name)
             if d is None:
                 return np.nan
-            ref = d[0, idx] if d.ndim == 2 and d.shape[0] == 1 else d[idx]
             try:
-                val = f[ref][()]
+                ref = d[0, idx] if getattr(d, 'ndim', 0) == 2 and d.shape[0] == 1 else d[idx]
+            except (IndexError, ValueError):
+                return np.nan
+            try:
+                val = f[ref][()] if isinstance(ref, h5py.Reference) else ref
             except:
                 val = ref
             arr = np.asarray(val)
@@ -107,14 +110,20 @@ def _load_hdf5_mat_file(file_path):
         
         for i in range(int(n)):
             # Dereference PPG
-            ppg_ref = ppg_refs[0, i] if ppg_refs.ndim == 2 else ppg_refs[i]
+            try:
+                ppg_ref = ppg_refs[0, i] if getattr(ppg_refs, 'ndim', 0) == 2 and ppg_refs.shape[0] == 1 else ppg_refs[i]
+            except (IndexError, ValueError):
+                continue
             try:
                 ppg_sig = f[ppg_ref][()] if isinstance(ppg_ref, h5py.Reference) else ppg_ref
             except:
                 ppg_sig = ppg_ref
             
             # Dereference ECG
-            ecg_ref = ecg_refs[0, i] if ecg_refs.ndim == 2 else ecg_refs[i]
+            try:
+                ecg_ref = ecg_refs[0, i] if getattr(ecg_refs, 'ndim', 0) == 2 and ecg_refs.shape[0] == 1 else ecg_refs[i]
+            except (IndexError, ValueError):
+                continue
             try:
                 ecg_sig = f[ecg_ref][()] if isinstance(ecg_ref, h5py.Reference) else ecg_ref
             except:
@@ -174,30 +183,21 @@ class LazyBPDataGenerator(keras.utils.Sequence):
         # Create cache directory
         os.makedirs(cache_dir, exist_ok=True)
         
-        # Load patient indices (maps to actual samples)
+        # Load or create manifest (tracks actual sample counts after preprocessing)
+        self.manifest_path = os.path.join(cache_dir, 'manifest.pkl')
+        self.manifest = self._load_or_create_manifest(patient_files, data_dir)
+        
+        # Load patient indices from manifest
         self.patient_indices = []
         self.total_samples = 0
         
-        print(f"   🔍 Indexing {len(patient_files)} patients...")
-        for patient_file in patient_files:
-            cache_path = self._get_cache_path(patient_file)
-            if os.path.exists(cache_path):
-                # Load from cache to get sample count
-                with open(cache_path, 'rb') as f:
-                    cached_data = pickle.load(f)
-                n_samples = cached_data['X'].shape[0]
-            else:
-                # Quick load to count samples (will cache later)
-                data = _load_mat_file(os.path.join(data_dir, patient_file))
-                n_samples = data['signals'].shape[0]
-            
-            # Store mapping: (patient_file, sample_index_in_patient)
-            for i in range(n_samples):
-                self.patient_indices.append((patient_file, i))
-            
-            self.total_samples += n_samples
+        print(f"   ✅ Indexed {sum(self.manifest.values())} samples from {len([k for k,v in self.manifest.items() if v > 0])} patients")
         
-        print(f"   ✅ Indexed {self.total_samples} samples from {len(patient_files)} patients")
+        for patient_file, n_samples in self.manifest.items():
+            if n_samples > 0:
+                for i in range(n_samples):
+                    self.patient_indices.append((patient_file, i))
+                self.total_samples += n_samples
         
         # Initialize indices for shuffling
         self.indices = np.arange(self.total_samples)
@@ -212,6 +212,57 @@ class LazyBPDataGenerator(keras.utils.Sequence):
         """Get cache file path for a patient."""
         cache_name = patient_file.replace('.mat', '_preprocessed.pkl')
         return os.path.join(self.cache_dir, cache_name)
+    
+    def _load_or_create_manifest(self, patient_files, data_dir):
+        """Load or create manifest of patient sample counts."""
+        if os.path.exists(self.manifest_path):
+            with open(self.manifest_path, 'rb') as f:
+                manifest = pickle.load(f)
+            
+            # Check if all patients are in manifest
+            if all(pf in manifest for pf in patient_files):
+                return {pf: manifest[pf] for pf in patient_files}
+        
+        # Create new manifest
+        print(f"   🔍 Building manifest for {len(patient_files)} patients...")
+        manifest = {}
+        
+        for i, patient_file in enumerate(patient_files):
+            if (i + 1) % 50 == 0:
+                print(f"   ... {i+1}/{len(patient_files)} patients processed")
+            
+            cache_path = self._get_cache_path(patient_file)
+            if os.path.exists(cache_path):
+                # Load from cache to get sample count
+                try:
+                    with open(cache_path, 'rb') as f:
+                        cached_data = pickle.load(f)
+                    n_samples = cached_data['X'].shape[0]
+                except Exception as e:
+                    # Cache corrupted, will reload
+                    os.remove(cache_path)
+                    n_samples = self._count_valid_samples(patient_file, data_dir)
+            else:
+                # Count samples (will trigger preprocessing)
+                n_samples = self._count_valid_samples(patient_file, data_dir)
+            
+            manifest[patient_file] = n_samples
+        
+        # Save manifest
+        with open(self.manifest_path, 'wb') as f:
+            pickle.dump(manifest, f)
+        
+        return manifest
+    
+    def _count_valid_samples(self, patient_file, data_dir):
+        """Count valid samples for a patient by preprocessing."""
+        try:
+            # This will preprocess and cache the data
+            data = self._load_patient_data(patient_file)
+            return data['X'].shape[0]
+        except Exception as e:
+            print(f"   ⚠️  Error processing {patient_file}: {e}")
+            return 0
     
     def _load_patient_data(self, patient_file):
         """Load and preprocess a single patient's data."""
@@ -235,6 +286,18 @@ class LazyBPDataGenerator(keras.utils.Sequence):
         signals = mat_data['signals']  # (n_samples, 2, timesteps) - [PPG, ECG]
         sbp_labels = mat_data['sbp'].flatten()
         dbp_labels = mat_data['dbp'].flatten()
+        
+        # Filter out signals that are too short (< 30 samples minimum for filtering)
+        MIN_SIGNAL_LENGTH = 30
+        valid_lengths = np.array([sig.shape[-1] >= MIN_SIGNAL_LENGTH for sig in signals])
+        if not valid_lengths.all():
+            signals = signals[valid_lengths]
+            sbp_labels = sbp_labels[valid_lengths]
+            dbp_labels = dbp_labels[valid_lengths]
+        
+        # Skip patient if no valid signals remain
+        if len(signals) == 0:
+            return {'X': np.empty((0, self.target_length, 4)), 'sbp': np.array([]), 'dbp': np.array([])}
         
         # Preprocess signals
         processed_signals = preprocess_signals(signals)
@@ -314,10 +377,22 @@ class LazyBPDataGenerator(keras.utils.Sequence):
             # Load patient data
             patient_data = self._get_patient_data(patient_file)
             
-            # Get specific sample
-            X_batch.append(patient_data['X'][sample_idx])
-            y_sbp_batch.append(patient_data['sbp'][sample_idx])
-            y_dbp_batch.append(patient_data['dbp'][sample_idx])
+            # Skip if patient has no valid samples (shouldn't happen with manifest)
+            if patient_data['X'].shape[0] == 0:
+                continue
+            
+            # Get specific sample (with bounds check)
+            if sample_idx < patient_data['X'].shape[0]:
+                X_batch.append(patient_data['X'][sample_idx])
+                y_sbp_batch.append(patient_data['sbp'][sample_idx])
+                y_dbp_batch.append(patient_data['dbp'][sample_idx])
+        
+        # Ensure batch is not empty (shouldn't happen, but safety check)
+        if len(X_batch) == 0:
+            # Return a single dummy sample to avoid crash (will be filtered by callbacks)
+            X_batch = [np.zeros((self.target_length, 4))]
+            y_sbp_batch = [0.0]
+            y_dbp_batch = [0.0]
         
         # Convert to numpy arrays
         X_batch = np.array(X_batch)
