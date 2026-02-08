@@ -64,7 +64,7 @@ def stratified_sample(y_values, n_samples, n_bins=5):
 
 def calibrate_patient_stratified(patient_id, checkpoint_path='checkpoints/best_model.h5', 
                                   n_calibration_samples=50, method='offset', 
-                                  stratify='sbp', seed=42):
+                                  stratify='sbp', seed=42, incremental=True):
     """
     Calibrate model using stratified sampling across BP range.
     
@@ -75,6 +75,7 @@ def calibrate_patient_stratified(patient_id, checkpoint_path='checkpoints/best_m
         method: 'linear' or 'offset'
         stratify: 'sbp', 'dbp', or 'both' - which BP to stratify on
         seed: Random seed for reproducibility
+        incremental: If True, refine existing calibration if available
     
     Returns:
         Calibration parameters dictionary
@@ -82,11 +83,31 @@ def calibrate_patient_stratified(patient_id, checkpoint_path='checkpoints/best_m
     
     np.random.seed(seed)
     
-    print("="*70)
-    print("  STRATIFIED PATIENT-SPECIFIC CALIBRATION")
-    print("="*70)
+    # Check for existing calibration
+    cal_path = f'calibration/calibration_{patient_id}.pkl'
+    existing_calibration = None
+    if incremental and os.path.exists(cal_path):
+        try:
+            with open(cal_path, 'rb') as f:
+                existing_calibration = pickle.load(f)
+            print("="*70)
+            print("  INCREMENTAL CALIBRATION (Refining Existing)")
+            print("="*70)
+            print(f"\n📋 Found existing calibration:")
+            print(f"   Previous samples: {existing_calibration['n_calibration_samples']}")
+            print(f"   Previous SBP offset: {existing_calibration['sbp_intercept']:.1f} mmHg")
+            print(f"   Previous DBP offset: {existing_calibration['dbp_intercept']:.1f} mmHg")
+        except Exception as e:
+            print(f"⚠️  Could not load existing calibration: {e}")
+            existing_calibration = None
+    
+    if existing_calibration is None:
+        print("="*70)
+        print("  STRATIFIED PATIENT-SPECIFIC CALIBRATION")
+        print("="*70)
+    
     print(f"\n👤 Patient: {patient_id}")
-    print(f"📊 Calibration samples: {n_calibration_samples}")
+    print(f"📊 New calibration samples: {n_calibration_samples}")
     print(f"🔧 Method: {method}")
     print(f"📈 Stratified by: {stratify.upper()}")
     
@@ -198,9 +219,42 @@ def calibrate_patient_stratified(patient_id, checkpoint_path='checkpoints/best_m
         dbp_slope = 1.0
         dbp_intercept = np.mean(y_dbp_cal - y_pred_dbp_cal)
     
+    # If incremental calibration, combine with existing parameters
+    if existing_calibration is not None:
+        old_n = existing_calibration['n_calibration_samples']
+        new_n = len(cal_indices)
+        total_n = old_n + new_n
+        
+        # Weighted average: more weight to more samples
+        weight_old = old_n / total_n
+        weight_new = new_n / total_n
+        
+        print(f"\n🔄 Combining with existing calibration:")
+        print(f"   Old weight: {weight_old:.2%} ({old_n} samples)")
+        print(f"   New weight: {weight_new:.2%} ({new_n} samples)")
+        
+        # Combine slopes and intercepts
+        old_sbp_slope = existing_calibration['sbp_slope']
+        old_sbp_intercept = existing_calibration['sbp_intercept']
+        old_dbp_slope = existing_calibration['dbp_slope']
+        old_dbp_intercept = existing_calibration['dbp_intercept']
+        
+        sbp_slope = weight_old * old_sbp_slope + weight_new * sbp_slope
+        sbp_intercept = weight_old * old_sbp_intercept + weight_new * sbp_intercept
+        dbp_slope = weight_old * old_dbp_slope + weight_new * dbp_slope
+        dbp_intercept = weight_old * old_dbp_intercept + weight_new * dbp_intercept
+        
+        print(f"\n   📈 SBP: {old_sbp_intercept:.1f} → {sbp_intercept:.1f} mmHg offset")
+        print(f"   📉 DBP: {old_dbp_intercept:.1f} → {dbp_intercept:.1f} mmHg offset")
+        
+        # Update total samples
+        n_calibration_samples = total_n
+    else:
+        n_calibration_samples = len(cal_indices)
+    
     calibration_params = {
         'patient_id': patient_id,
-        'n_calibration_samples': len(cal_indices),
+        'n_calibration_samples': n_calibration_samples,
         'method': method,
         'stratify': stratify,
         'sbp_slope': float(sbp_slope),
@@ -213,8 +267,8 @@ def calibrate_patient_stratified(patient_id, checkpoint_path='checkpoints/best_m
         'dbp_std': float(np.std(y_dbp_cal))
     }
     
-    print(f"\n   📈 SBP calibration: y = {sbp_slope:.3f} × pred + {sbp_intercept:.1f}")
-    print(f"   📉 DBP calibration: y = {dbp_slope:.3f} × pred + {dbp_intercept:.1f}")
+    print(f"\n   📈 Final SBP calibration: y = {sbp_slope:.3f} × pred + {sbp_intercept:.1f}")
+    print(f"   📉 Final DBP calibration: y = {dbp_slope:.3f} × pred + {dbp_intercept:.1f}")
     
     # Test on remaining samples
     if len(test_indices) > 0:
@@ -271,7 +325,11 @@ def calibrate_patient_stratified(patient_id, checkpoint_path='checkpoints/best_m
     with open(cal_path, 'wb') as f:
         pickle.dump(calibration_params, f)
     
-    print(f"\n💾 Calibration saved to: {cal_path}")
+    if existing_calibration:
+        print(f"\n💾 Updated calibration saved to: {cal_path}")
+        print(f"   Total calibration samples: {n_calibration_samples}")
+    else:
+        print(f"\n💾 Calibration saved to: {cal_path}")
     
     return calibration_params
 
@@ -294,11 +352,14 @@ if __name__ == '__main__':
                        help='Stratify by SBP, DBP, or both (default: both)')
     parser.add_argument('--seed', type=int, default=42,
                        help='Random seed (default: 42)')
+    parser.add_argument('--no-incremental', action='store_true',
+                       help='Ignore existing calibration and start fresh')
     
     args = parser.parse_args()
     
     calibrate_patient_stratified(args.patient, args.model, args.n_samples, 
-                                 args.method, args.stratify, args.seed)
+                                 args.method, args.stratify, args.seed,
+                                 incremental=not args.no_incremental)
     
     print("\n" + "="*70)
     print("  Now run: python analyze_patient_predictions.py --patient", args.patient)
