@@ -49,7 +49,7 @@ def calculate_metrics(y_true, y_pred):
     }
 
 
-def analyze_patient(patient_id=None, checkpoint_path='checkpoints/best_model.h5'):
+def analyze_patient(patient_id=None, checkpoint_path='checkpoints/best_model.h5', use_random=False):
     """Analyze predictions for a specific patient."""
     
     print("="*70)
@@ -154,8 +154,37 @@ def analyze_patient(patient_id=None, checkpoint_path='checkpoints/best_model.h5'
     y_pred_sbp = predictions[0].flatten()
     y_pred_dbp = predictions[1].flatten()
     
+    # Apply patient-specific calibration if available
+    calibration_path = f'calibration/calibration_{patient_id}.pkl'
+    calibrated = False
+    if os.path.exists(calibration_path):
+        import pickle
+        print(f"🔧 Applying patient-specific calibration...")
+        try:
+            with open(calibration_path, 'rb') as f:
+                cal_params = pickle.load(f)
+            
+            # Store uncalibrated predictions for comparison
+            y_pred_sbp_uncal = y_pred_sbp.copy()
+            y_pred_dbp_uncal = y_pred_dbp.copy()
+            
+            # Apply linear calibration: y_calibrated = slope * y_pred + intercept
+            y_pred_sbp = cal_params['sbp_slope'] * y_pred_sbp + cal_params['sbp_intercept']
+            y_pred_dbp = cal_params['dbp_slope'] * y_pred_dbp + cal_params['dbp_intercept']
+            
+            calibrated = True
+            print(f"   ✅ Applied calibration from {cal_params['n_calibration_samples']} samples")
+            print(f"      SBP: y = {cal_params['sbp_slope']:.3f} × pred + {cal_params['sbp_intercept']:.1f}")
+            print(f"      DBP: y = {cal_params['dbp_slope']:.3f} × pred + {cal_params['dbp_intercept']:.1f}")
+        except Exception as e:
+            print(f"   ⚠️  Failed to apply calibration: {e}")
+            calibrated = False
+    else:
+        print(f"   ℹ️  No calibration found. Run: python calibration.py --patient {patient_id} --n-samples 50")
+    
     # Calculate metrics
-    print("\n📊 RESULTS FOR PATIENT:", patient_id)
+    metric_label = "CALIBRATED " if calibrated else ""
+    print(f"\n📊 {metric_label}RESULTS FOR PATIENT:", patient_id)
     print("="*70)
     
     print("\n📈 SBP (Systolic Blood Pressure):")
@@ -239,11 +268,21 @@ def analyze_patient(patient_id=None, checkpoint_path='checkpoints/best_model.h5'
     print(f"   ✅ Saved to: {output_path}")
     
     # Show a few sample predictions
-    print("\n📋 Sample Predictions (first 10 samples):")
+    sample_label = "random 10 samples" if use_random else "first 10 samples"
+    print(f"\n📋 Sample Predictions ({sample_label}):")
     print("-" * 70)
     print(f"{'Index':<6} {'Actual SBP':<12} {'Pred SBP':<12} {'Error':<8} | {'Actual DBP':<12} {'Pred DBP':<12} {'Error':<8}")
     print("-" * 70)
-    for i in range(min(10, len(y_sbp_patient))):
+    
+    # Select indices: random or first 10
+    n_samples_to_show = min(10, len(y_sbp_patient))
+    if use_random:
+        indices = np.random.choice(len(y_sbp_patient), size=n_samples_to_show, replace=False)
+        indices = sorted(indices)  # Sort for easier reading
+    else:
+        indices = range(n_samples_to_show)
+    
+    for i in indices:
         sbp_err = y_pred_sbp[i] - y_sbp_patient[i]
         dbp_err = y_pred_dbp[i] - y_dbp_patient[i]
         print(f"{i:<6} {y_sbp_patient[i]:<12.1f} {y_pred_sbp[i]:<12.1f} {sbp_err:>7.1f} | "
@@ -253,7 +292,7 @@ def analyze_patient(patient_id=None, checkpoint_path='checkpoints/best_model.h5'
     print("  ANALYSIS COMPLETE")
     print("="*70)
     
-    plt.show()
+    # plt.show()
     
     return {
         'patient_id': patient_id,
@@ -275,7 +314,9 @@ if __name__ == '__main__':
                        help='Patient ID (e.g., p003232). If not provided, uses last patient.')
     parser.add_argument('--model', type=str, default='checkpoints/best_model.h5',
                        help='Path to trained model')
+    parser.add_argument('--random', action='store_true',
+                       help='Use random samples instead of first 10 for sample predictions')
     
     args = parser.parse_args()
     
-    analyze_patient(patient_id=args.patient, checkpoint_path=args.model)
+    analyze_patient(patient_id=args.patient, checkpoint_path=args.model, use_random=args.random)
