@@ -4,45 +4,60 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                         ESP32 + MAX30102                            │
+│                    ESP32 + MAX30102 + ECG Sensor                    │
 │                                                                     │
-│  1. Read Raw PPG (200 Hz)                                          │
-│  2. DC Removal (α = 0.01)                                          │
-│  3. Bandpass Filter (0.7-4 Hz, 3rd order Butterworth)              │
-│  4. Output: timestamp,ir_raw,filtered_value                        │
+│  1. Read Raw PPG from MAX30102 (250 Hz)                            │
+│  2. Read Raw ECG from sensor (500 Hz)                              │
+│  3. Read Heart Rate from sensor (if available)                     │
+│  4. Output: timestamp,ppg_raw,ecg_raw,hr (optional)                │
 └────────────────────┬────────────────────────────────────────────────┘
                      │ Serial (115200 baud)
                      │ USB Cable
                      ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│                    Python Script (ppg_realtime_bp.py)               │
+│                    Python Script (bridge_server.py)                 │
 │                                                                     │
-│  STEP 1: Data Reception & Buffering                                │
-│  ├─ Read filtered PPG values                                       │
-│  ├─ Buffer ~1400 samples (7 seconds @ 200 Hz)                      │
+│  STEP 1: Data Reception & Filtering                                │
+│  ├─ Read RAW PPG and ECG values from serial                        │
+│  ├─ Apply bandpass filters:                                        │
+│  │  • PPG: 0.5-4.0 Hz (IIR, 3rd order Butterworth)                 │
+│  │  • ECG: 0.5-40.0 Hz (IIR, 3rd order Butterworth)                │
+│  ├─ Buffer filtered data (~1400 PPG, ~2800 ECG samples)            │
 │  └─ Downsample to 125 Hz → 875 samples                             │
 │                                                                     │
-│  STEP 2: Feature Extraction                                        │
+│  STEP 2: Signal Quality Validation                                 │
+│  ├─ Check ECG quality (std > 0.01, no NaN/Inf)                     │
+│  ├─ Check PPG quality (std > 0.01, no NaN/Inf)                     │
+│  ├─ Validate filtered signals (not raw)                            │
+│  └─ Calculate combined quality score (0.0 - 1.0)                   │
+│                                                                     │
+│  STEP 3: Feature Extraction                                        │
 │  ├─ Generate simulated ECG (or use real ECG)                       │
 │  ├─ Detect R-peaks (ECG) and PPG feet                              │
 │  ├─ Calculate PAT (Pulse Arrival Time)                             │
-│  └─ Calculate HR (Heart Rate)                                      │
+│  ├─ Calculate HR (Heart Rate)                                      │
+│  └─ Reject low quality signals (use defaults if quality fails)     │
 │                                                                     │
-│  STEP 3: Create 4-Channel Input                                    │
-│  ├─ Channel 1: ECG (normalized)                                    │
-│  ├─ Channel 2: PPG (normalized)                                    │
+│  STEP 4: Create 4-Channel Input                                    │
+│  ├─ Channel 1: ECG (normalized with separate statistics)           │
+│  ├─ Channel 2: PPG (normalized with separate statistics)           │
 │  ├─ Channel 3: PAT sequence                                        │
 │  └─ Channel 4: HR sequence                                         │
 │         Shape: (1, 875, 4)                                          │
 │                                                                     │
-│  STEP 4: Model Inference                                           │
+│  STEP 5: Quality Threshold Check                                   │
+│  ├─ Require signal quality ≥ 60%                                   │
+│  ├─ Block predictions if quality too low                           │
+│  └─ Send error message to frontend                                 │
+│                                                                     │
+│  STEP 6: Model Inference                                           │
 │  ├─ Load trained CNN-LSTM model                                    │
 │  ├─ Forward pass through network                                   │
 │  └─ Output: [SBP, DBP] predictions                                 │
 │                                                                     │
-│  STEP 5: Visualization & Logging                                   │
+│  STEP 7: Visualization & Logging                                   │
 │  ├─ Real-time plots (PPG, BP history)                              │
-│  ├─ Console output                                                 │
+│  ├─ Console output with quality indicators                         │
 │  └─ CSV logging                                                    │
 └─────────────────────────────────────────────────────────────────────┘
                      │
@@ -79,18 +94,24 @@ Output: Blood Pressure (mmHg)
 
 ### On ESP32 (Embedded):
 ```
-Raw PPG (12-bit ADC) → DC Removal → Bandpass Filter → Serial Output
-                          ↓              ↓
-                    EMA smoothing    IIR Filter
-                    α = 0.01         6th order
-                                     0.7-4 Hz
+PPG Sensor (MAX30102) → ADC Read (12-bit) → Serial Output (RAW)
+                           ↓
+                        250 Hz
+
+ECG Sensor (AD8232)   → ADC Read (12-bit) → Serial Output (RAW)
+                           ↓
+                        500 Hz
+
+Format: timestamp,ppg_raw,ecg_raw,hr
 ```
 
-### On Host (Python):
+### On Host (Python - bridge_server.py):
 ```
-Filtered PPG → Downsample → Normalization → Feature Extraction → Model
-     ↓            ↓             ↓                  ↓
-  200 Hz      125 Hz      Z-score         PAT, HR, etc.
+RAW Signals → IIR Bandpass Filter → Buffer → Downsample → Normalization → Quality → Features → Model
+    ↓              ↓                   ↓         ↓             ↓              ↓          ↓
+250/500 Hz   PPG: 0.5-4Hz          250/500   125 Hz    Separate stats   ≥60%    PAT, HR
+             ECG: 0.5-40Hz          samples              (PPG & ECG)   required
+             (3rd order IIR)
 ```
 
 ## Timing Diagram
@@ -116,12 +137,13 @@ cuffless-blood-pressure/
 │
 ├── esp32/
 │   ├── ppg_reader_filtered/
-│   │   └── ppg_reader_filtered.ino    # ESP32 sketch with filtering
+│   │   └── ppg_reader_filtered.ino    # ESP32 sketch (reads raw PPG + ECG)
 │   └── README.md                       # ESP32 setup guide
 │
+├── bridge_server.py                   # WebSocket server (real-time filtering & BP)
 ├── scripts/
 │   ├── ppg_reader.py                  # Basic PPG visualization
-│   ├── ppg_realtime_bp.py             # Real-time BP estimation
+│   ├── ppg_realtime_bp.py             # Real-time BP estimation (alternative)
 │   └── README.md                       # Usage documentation
 │
 ├── src/models/
@@ -168,33 +190,35 @@ cuffless-blood-pressure/
 
 ## Usage Examples
 
-### 1. Data Collection Only
+### 1. Real-time BP Estimation with WebSocket (Recommended)
 ```bash
-python scripts/ppg_reader.py --port /dev/ttyUSB0
+python bridge_server.py
+# Then open frontend at http://localhost:3000
 ```
 
-### 2. Real-time BP Estimation with Visualization
+### 2. Real-time BP Estimation with Visualization (Standalone)
 ```bash
 python scripts/ppg_realtime_bp.py --port /dev/ttyUSB0
 ```
 
-### 3. Headless Mode (no plots, faster)
+### 3. Basic Data Collection
 ```bash
-python scripts/ppg_realtime_bp.py --no-plot --output my_bp_data.csv
+python scripts/ppg_reader.py --port /dev/ttyUSB0
 ```
 
-### 4. Custom Model Path
+### 4. Custom Serial Port
 ```bash
-python scripts/ppg_realtime_bp.py --model /path/to/custom_model.h5
+python bridge_server.py --port /dev/ttyUSB1 --baudrate 115200
 ```
 
 ## Output Examples
 
 ### Console:
 ```
-[  1] BP:  118.3/ 78.2 mmHg  (samples: 250)
-[  2] BP:  119.1/ 78.8 mmHg  (samples: 500)
-[  3] BP:  117.5/ 77.6 mmHg  (samples: 750)
+[  1] BP:  118.3/ 78.2 mmHg (quality: 85.2%, sent to 1 clients)
+[  2] BP:  119.1/ 78.8 mmHg (quality: 87.3%, sent to 1 clients)
+Signal quality too low (45.0%) - skipping prediction. Connect both PPG and ECG sensors.
+[  3] BP:  117.5/ 77.6 mmHg (quality: 82.1%, sent to 1 clients)
 ```
 
 ### CSV (`bp_predictions.csv`):
@@ -205,19 +229,57 @@ prediction_id,timestamp,sbp,dbp,samples_used
 3,1738512350.123,117.5,77.6,1400
 ```
 
+## Signal Quality Validation
+
+### Quality Checks Applied:
+
+1. **ECG Signal Quality**:
+   - Bandpass filter: 0.5-40 Hz (3rd order Butterworth)
+   - Standard deviation > 0.01
+   - No NaN or Inf values
+   - Independent normalization statistics
+
+2. **PPG Signal Quality**:
+   - Bandpass filter: 0.5-8 Hz (3rd order Butterworth)
+   - Standard deviation > 0.01
+   - No NaN or Inf values
+   - Independent normalization statistics
+
+3. **Combined Quality Score**:
+   - Both signals valid: 80-100% (average of both)
+   - Only PPG valid: Max 50%
+   - Only ECG valid: Max 50%
+   - Both invalid: 0%
+
+4. **Prediction Threshold**:
+   - Requires ≥ 60% signal quality
+   - Below threshold: Display "--/--" with warning
+   - Prevents misleading predictions from poor signals
+
+### Quality Indicators:
+
+| Quality | Status | Action |
+|---------|--------|--------|
+| 80-100% | Excellent | Normal predictions |
+| 60-79% | Good | Predictions allowed |
+| 40-59% | Poor | Predictions blocked |
+| 0-39% | Failed | Check connections |
+
 ## Important Notes
 
 ⚠️ **Medical Disclaimer**: This system is for research and educational purposes only. Not intended for medical diagnosis or treatment.
 
-⚠️ **ECG Requirement**: Current implementation uses simulated ECG. For production use:
-- Add real ECG sensor (e.g., AD8232)
+⚠️ **ECG Requirement**: For production use with real ECG sensor:
+- Add ECG sensor (e.g., AD8232)
 - Modify ESP32 sketch to read both sensors
-- Update Python script to use real ECG data
+- Update `bridge_server.py` for dual-sensor input
+- Signal quality will automatically validate both sensors
 
 ⚠️ **Calibration**: Model may require individual calibration for best accuracy.
 
 ⚠️ **Signal Quality**: Ensure:
-- Good sensor contact
-- Minimal motion
-- Proper finger placement
-- Clean sensors
+- Good sensor contact (both PPG and ECG)
+- Minimal motion during measurement
+- Proper electrode/sensor placement
+- Clean sensors and skin contact areas
+- ECG sensor connected (or quality will drop to ~50%)

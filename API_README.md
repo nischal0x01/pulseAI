@@ -89,6 +89,18 @@ The API loads the trained model from `checkpoints/best_model.h5`. This model exp
 - **Input**: 4 channels (ECG, PPG, PAT, HR) with 875 timesteps
 - **Output**: 2 values (SBP, DBP) in mmHg
 
+### Signal Quality
+
+The API automatically validates input signal quality:
+- Checks both ECG and PPG for valid data (std > 0.01, no NaN/Inf)
+- Applies independent normalization for each signal type
+- Returns error if signal quality is insufficient
+
+**Best Practices**:
+- Ensure ECG and PPG arrays have 875 samples each
+- Provide clean, filtered signals for best results
+- Check for NaN/Inf values before sending
+
 ## Development
 
 To run in development mode with auto-reload:

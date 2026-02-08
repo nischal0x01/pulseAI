@@ -1,22 +1,24 @@
 # PPG Data Acquisition Scripts
 
-Python scripts for reading and visualizing PPG data from ESP32.
+Python scripts for reading and visualizing PPG/ECG data from ESP32.
 
 ## Scripts Overview
 
-1. **ppg_reader.py** - Basic PPG data reception and visualization
+1. **ppg_reader.py** - Basic PPG/ECG data reception and visualization
 2. **ppg_realtime_bp.py** - Real-time blood pressure estimation using trained model
+
+**Note**: For production use with web interface, use `bridge_server.py` in the root directory instead.
 
 ---
 
 ## ppg_reader.py
 
-Receives pre-filtered PPG data from ESP32 with on-device signal processing.
+Receives **RAW** PPG and ECG data from ESP32. Filtering can be added in Python as needed.
 
 ### Installation
 
 ```bash
-pip install pyserial numpy matplotlib
+pip install pyserial numpy matplotlib scipy
 ```
 
 ### Usage
@@ -58,8 +60,9 @@ python ppg_reader.py --no-plot
 
 Creates a CSV file with columns:
 - `timestamp`: Milliseconds from ESP32
-- `ir_raw`: Raw IR sensor reading
-- `ir_filtered`: Filtered PPG signal from ESP32
+- `ppg_raw`: Raw PPG sensor reading (12-bit ADC)
+- `ecg_raw`: Raw ECG sensor reading (12-bit ADC)
+- `heart_rate`: Heart rate from sensor (if available)
 
 ### Linux Permissions
 
@@ -138,11 +141,16 @@ sudo usermod -a -G dialout $USER
 
 Real-time blood pressure estimation using the trained CNN-LSTM model.
 
+**Note**: This is a standalone script. For production use with web interface and full signal quality validation, use `bridge_server.py` instead.
+
 ### Features
-- Receives pre-filtered PPG from ESP32
+- Receives **RAW** PPG and ECG from ESP32
+- Applies IIR bandpass filters in Python
+- Validates signal quality (both PPG and ECG)
 - Buffers data into 7-second windows (875 samples @ 125 Hz)
 - Extracts physiological features (PAT, HR)
-- Predicts SBP/DBP using trained model
+- Independent normalization for PPG and ECG
+- Predicts SBP/DBP using trained model (if quality ≥ 60%)
 - Real-time visualization of signals and predictions
 
 ### Installation
