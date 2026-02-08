@@ -1,5 +1,9 @@
 # Hardware Wiring Guide - ESP32 + MAX30102 + AD8232
 
+## Overview
+
+This setup reads **RAW** signals from both PPG and ECG sensors. All signal processing (filtering, normalization, quality validation) is performed in Python (`bridge_server.py`) for maximum flexibility.
+
 ## Components Needed
 
 1. **ESP32 Development Board** (any variant with ADC pins)
@@ -8,6 +12,16 @@
 4. **ECG Electrodes** (3 disposable gel electrodes)
 5. **Jumper wires**
 6. **USB cable** (for ESP32)
+
+## Signal Flow
+
+```
+MAX30102 (PPG) ──► ESP32 ──► USB Serial ──► Python ──► Bandpass Filter ──► BP Model
+AD8232 (ECG)  ──┘              (RAW)         (RAW)     (0.5-4Hz PPG)
+                                                        (0.5-40Hz ECG)
+```
+
+**Key Point**: ESP32 sends raw ADC values. Python applies IIR filters and validates signal quality.
 
 ---
 

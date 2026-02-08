@@ -2,6 +2,15 @@
 
 A machine learning project for estimating blood pressure from PPG (Photoplethysmography) and ECG (Electrocardiography) signals using deep learning techniques. This project implements CNN-LSTM architecture with attention mechanisms for non-invasive blood pressure prediction.
 
+## ✨ Key Features
+
+- **Real-time BP monitoring** with web interface
+- **Dual signal quality validation** (PPG + ECG)
+- **Intelligent prediction gating** (requires ≥60% signal quality)
+- **Independent signal normalization** for accurate predictions
+- **WebSocket-based streaming** for real-time data
+- **Raw signal filtering** in Python for flexibility
+
 ## 🎯 Quick Start - Real-time BP Monitoring
 
 ### Hardware Setup
@@ -100,7 +109,25 @@ The system uses WebSocket connections to stream real-time physiological signals:
     "ppg_value": 0.5,
     "ecg_value": 0.2,
     "sample_rate": 250,
-    "quality": 0.8
+    "quality": 0.85,
+    "heart_rate": 72
+  }
+}
+```
+
+**Note**: `quality` ranges from 0.0 to 1.0 and represents combined PPG+ECG signal quality. Predictions require quality ≥ 0.6.
+
+### BP Prediction Format
+```json
+{
+  "type": "bp_prediction",
+  "payload": {
+    "sbp": 118.3,
+    "dbp": 78.2,
+    "timestamp": 1640995200000,
+    "confidence": 0.87,
+    "prediction_count": 42,
+    "error": "Low signal quality - check sensor connections" // Optional, if quality too low
   }
 }
 ```

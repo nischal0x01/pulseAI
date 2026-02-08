@@ -1,19 +1,23 @@
-# ESP32 PPG + ECG Reader with On-Device Filtering
+# ESP32 PPG + ECG Reader (Raw Signal Mode)
 
-This directory contains the ESP32 Arduino sketch for reading PPG and ECG data from sensors with on-device signal processing.
+This directory contains the ESP32 Arduino sketch for reading **RAW** PPG and ECG data from sensors and transmitting to Python for processing.
 
 ## Features
 
-- **PPG Processing (MAX30102)**:
-  - DC Component Removal (EMA filter)
-  - Bandpass Filtering (0.7-4 Hz, 3rd order Butterworth)
+- **PPG Reading (MAX30102)**:
+  - High-speed sampling (250 Hz)
+  - Raw IR/Red LED readings
+  - No on-device filtering
   
-- **ECG Processing (AD8232)**:
-  - Bandpass Filtering (0.5-40 Hz, 3rd order Butterworth)
+- **ECG Reading (AD8232)**:
+  - High-speed sampling (500 Hz)
+  - Raw analog readings
   - Leads-off detection
   
-- **Real-time Processing**: All filtering happens on ESP32
-- **High Sample Rate**: 200 Hz sampling for accurate signal capture
+- **Serial Transmission**: 
+  - Format: `timestamp,ppg_raw,ecg_raw,hr`
+  - All signal processing done in Python for flexibility
+  - Allows experimenting with different filter designs
 
 ## Hardware Requirements
 
@@ -73,47 +77,41 @@ This directory contains the ESP32 Arduino sketch for reading PPG and ECG data fr
 ```cpp
 byte ledBrightness = 60;   // LED brightness (0-255)
 byte sampleAverage = 1;     // Number of samples to average (1, 2, 4, 8, 16, 32)
-int sampleRate = 200;       // Sample rate in Hz (50, 100, 200, 400, 800, 1000, 1600, 3200)
+int sampleRate = 250;       // PPG sample rate in Hz (recommended: 250)
 int pulseWidth = 411;       // LED pulse width in µs (69, 118, 215, 411)
 int adcRange = 4096;        // ADC range (2048, 4096, 8192, 16384)
 ```
 
-### Filter Parameters:
-
-**PPG Filter:**
-```cpp
-const float DC_ALPHA = 0.01;  // DC removal smoothing factor (0.001-0.1)
-```
+### Pin Configuration:
 
 **ECG Pins:**
 ```cpp
-const int ECG_PIN = 34;        // Change if using different ADC pin
+const int ECG_PIN = 34;        // ADC pin for ECG signal
 const int LO_PLUS_PIN = 32;    // Leads-off detection LO+
 const int LO_MINUS_PIN = 33;   // Leads-off detection LO-
 ```
 
-The bandpass filter coefficients are pre-calculated:
-- PPG: 0.7-4 Hz at 200 Hz sampling rate
-- ECG: 0.5-40 Hz at 200 Hz sampling rate
+**Sampling Rates:**
+- PPG: 250 Hz (configurable in MAX30102 setup)
+- ECG: 500 Hz (ADC sampling in loop)
 
-To change these:
+## Data Format
 
-1. Use Python with scipy:
-   ```python
-   from scipy.signal import butter
-   
-   # For PPG (0.7-4 Hz)
-   ppg_b, ppg_a = butter(N=3, Wn=[0.7, 4], btype='band', fs=200)
-   print("PPG b_coeff:", ppg_b)
-   print("PPG a_coeff:", ppg_a)
-   
-   # For ECG (0.5-40 Hz)
-   ecg_b, ecg_a = butter(N=3, Wn=[0.5, 40], btype='band', fs=200)
-   print("ECG b_coeff:", ecg_b)
-   print("ECG a_coeff:", ecg_a)
-   ```
+The ESP32 transmits raw data via serial at 115200 baud:
 
-2. Update the corresponding `ppg_b_coeff`, `ppg_a_coeff`, `ecg_b_coeff`, and `ecg_a_coeff` arrays in the sketch
+```
+timestamp,ppg_raw,ecg_raw,heart_rate
+1234567890,2048,1536,72
+1234567894,2050,1540,72
+```
+
+Where:
+- `timestamp`: Milliseconds since boot
+- `ppg_raw`: Raw IR value from MAX30102 (12-bit, 0-4095)
+- `ecg_raw`: Raw ADC value from AD8232 (12-bit, 0-4095)
+- `heart_rate`: Optional, from MAX30102 sensor (0 if not available)
+
+**Note**: All filtering (bandpass, normalization, etc.) is performed in Python (`bridge_server.py`) for maximum flexibility.
 
 ## Output Format
 

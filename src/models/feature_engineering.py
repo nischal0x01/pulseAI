@@ -63,14 +63,28 @@ def extract_physiological_features(ecg_signals, ppg_signals, sampling_rate=SAMPL
     quality_mask = []  # Track which windows have good signal quality
 
     for i in range(ecg_signals.shape[0]):
-        ecg = ecg_signals[i]
+        # Apply bandpass filter to both ECG and PPG for better signal quality
+        try:
+            ecg = bandpass_filter(ecg_signals[i], lowcut=0.5, highcut=40.0, fs=sampling_rate)
+        except Exception as e:
+            print(f"   ⚠️  Sample {i}: ECG filter failed ({e}), using raw ECG")
+            ecg = ecg_signals[i]
         
         # Apply bandpass filter to PPG for cleaner foot detection
         try:
             ppg = bandpass_filter(ppg_signals[i], lowcut=0.5, highcut=8.0, fs=sampling_rate)
         except Exception as e:
-            print(f"   ⚠️  Sample {i}: Filter failed ({e}), using raw PPG")
+            print(f"   ⚠️  Sample {i}: PPG filter failed ({e}), using raw PPG")
             ppg = ppg_signals[i]
+        
+        # Check ECG signal quality
+        ecg_valid = np.std(ecg) > 1e-6 and not np.any(np.isnan(ecg)) and not np.any(np.isinf(ecg))
+        ppg_valid = np.std(ppg) > 1e-6 and not np.any(np.isnan(ppg)) and not np.any(np.isinf(ppg))
+        
+        if not ecg_valid:
+            print(f"   ⚠️  Sample {i}: ECG signal quality check failed (std={np.std(ecg):.6f})")
+        if not ppg_valid:
+            print(f"   ⚠️  Sample {i}: PPG signal quality check failed (std={np.std(ppg):.6f})")
 
         # --- 1. R-peak detection (ECG) ---
         r_peaks, _ = find_peaks(
@@ -91,9 +105,13 @@ def extract_physiological_features(ecg_signals, ppg_signals, sampling_rate=SAMPL
             distance=int(sampling_rate * MIN_R_PEAK_DISTANCE_MULTIPLIER)
         )
         
-        # Signal Quality Check: Need at least 2 cardiac cycles
-        if len(r_peaks) < 2 or len(ppg_feet) < 2:
+        # Signal Quality Check: Need at least 2 cardiac cycles AND valid signals
+        if len(r_peaks) < 2 or len(ppg_feet) < 2 or not ecg_valid or not ppg_valid:
             quality_mask.append(False)
+            if not ecg_valid or not ppg_valid:
+                print(f"   ⚠️  Sample {i}: Rejecting due to signal quality (ECG valid: {ecg_valid}, PPG valid: {ppg_valid})")
+            if not ecg_valid or not ppg_valid:
+                print(f"   ⚠️  Sample {i}: Rejecting due to signal quality (ECG valid: {ecg_valid}, PPG valid: {ppg_valid})")
             # Fill with reasonable defaults
             if hr_from_sensor is not None:
                 # Use sensor-provided HR even for low quality signals

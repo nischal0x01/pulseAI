@@ -42,9 +42,9 @@ Frontend runs on `http://localhost:3000`
 
 ```
 ┌──────────────┐
-│   ESP32      │  Filters PPG (DC + bandpass) and ECG (bandpass)
-│  MAX30102    │  Sends: timestamp,ppg_raw,ppg_filtered,ecg_raw,ecg_filtered
-│  AD8232      │
+│   ESP32      │  Reads RAW PPG (250Hz) and RAW ECG (500Hz)
+│  MAX30102    │  Sends: timestamp,ppg_raw,ecg_raw,hr (optional)
+│  AD8232      │  No filtering on device - all done in Python
 └──────┬───────┘
        │ Serial (USB)
        │ 115200 baud
@@ -52,11 +52,18 @@ Frontend runs on `http://localhost:3000`
 ┌──────────────────────────────────────┐
 │   bridge_server.py (Python)          │
 │                                      │
-│  • Reads filtered PPG & ECG         │
+│  • Applies IIR bandpass filters      │
+│    - PPG: 0.5-4.0 Hz (3rd order)     │
+│    - ECG: 0.5-40.0 Hz (3rd order)    │
+│  • Validates signal quality          │
+│    - Checks PPG std, NaN, Inf        │
+│    - Checks ECG std, NaN, Inf        │
+│    - Combines to 0.0-1.0 score       │
 │  • Buffers 7 seconds of data        │
 │  • Extracts PAT, HR features        │
+│  • Requires quality ≥ 60% for BP    │
 │  • Runs CNN-LSTM model              │
-│  • Predicts SBP/DBP                 │
+│  • Predicts SBP/DBP or error        │
 │  • Broadcasts via WebSocket         │
 └──────┬───────────────────────────────┘
        │ WebSocket
@@ -65,8 +72,10 @@ Frontend runs on `http://localhost:3000`
 ┌──────────────────────────────────────┐
 │   Frontend (Next.js)                 │
 │                                      │
-│  • Receives PPG signal data         │
+│  • Receives filtered signal data    │
+│  • Displays signal quality meter    │
 │  • Receives BP predictions          │
+│  • Shows quality warnings           │
 │  • Displays real-time charts        │
 │  • Shows latest BP reading          │
 └──────────────────────────────────────┘
@@ -84,15 +93,24 @@ Frontend runs on `http://localhost:3000`
   "payload": {
     "timestamp": 1738512345678,
     "ppg_value": 0.234,
-    "ecg_value": 0.0,
-    "sample_rate": 200,
-    "quality": 0.85
+    "ecg_value": 0.156,
+    "sample_rate": 250,
+    "quality": 0.85,
+    "heart_rate": 72
   }
 }
 ```
 
+**Quality Field**: 
+- Range: 0.0 to 1.0
+- Combines PPG and ECG signal quality
+- 0.8-1.0: Excellent (both signals good)
+- 0.6-0.79: Good (predictions allowed)
+- Below 0.6: Poor (predictions blocked)
+
 ### BP Prediction (sent every ~2 seconds)
 
+**Success Case (quality ≥ 60%):**
 ```json
 {
   "type": "bp_prediction",
@@ -101,6 +119,21 @@ Frontend runs on `http://localhost:3000`
     "dbp": 78.2,
     "timestamp": 1738512345678,
     "confidence": 0.85,
+    "prediction_count": 42
+  }
+}
+```
+
+**Low Quality Case (quality < 60%):**
+```json
+{
+  "type": "bp_prediction",
+  "payload": {
+    "sbp": null,
+    "dbp": null,
+    "timestamp": 1738512345678,
+    "confidence": 0.45,
+    "error": "Low signal quality - check sensor connections",
     "prediction_count": 42
   }
 }

@@ -13,11 +13,12 @@ const PPG_BUFFER_SIZE = 2500 // 10 seconds at 250Hz
 const ECG_BUFFER_SIZE = 5000 // 10 seconds at 500Hz
 
 export interface BPPredictionData {
-  sbp: number
-  dbp: number
+  sbp: number | null
+  dbp: number | null
   timestamp: number
   confidence: number
   prediction_count: number
+  error?: string
 }
 
 interface SignalContextType {
