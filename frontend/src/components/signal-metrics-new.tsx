@@ -59,9 +59,14 @@ export function SignalMetrics() {
       <MetricCard
         icon={Heart}
         label="Blood Pressure"
-        value={latestBP ? `${Math.round(latestBP.sbp)}/${Math.round(latestBP.dbp)}` : "--/--"}
-        unit="mmHg"
-        color={latestBP ? getBPColor(latestBP.sbp, latestBP.dbp) : "text-gray-500"}
+        value={latestBP && latestBP.sbp !== null && latestBP.dbp !== null 
+          ? `${Math.round(latestBP.sbp)}/${Math.round(latestBP.dbp)}` 
+          : "--/--"}
+        unit={latestBP?.error ? "⚠️" : "mmHg"}
+        color={latestBP && latestBP.sbp !== null && latestBP.dbp !== null 
+          ? getBPColor(latestBP.sbp, latestBP.dbp) 
+          : latestBP?.error ? "text-amber-500" : "text-gray-500"}
+        subtitle={latestBP?.error}
       />
 
       <MetricCard
@@ -101,6 +106,7 @@ interface MetricCardProps {
   color: string
   progress?: number
   progressColor?: string
+  subtitle?: string
 }
 
 function MetricCard({
@@ -111,6 +117,7 @@ function MetricCard({
   color,
   progress,
   progressColor,
+  subtitle,
 }: MetricCardProps) {
   return (
     <div className="relative overflow-hidden rounded-lg border bg-card p-6 shadow">
@@ -121,6 +128,9 @@ function MetricCard({
             <p className={`text-2xl font-bold ${color}`}>{value}</p>
             <p className="text-sm text-muted-foreground">{unit}</p>
           </div>
+          {subtitle && (
+            <p className="text-xs text-amber-500 font-medium mt-1">{subtitle}</p>
+          )}
         </div>
         {Icon && (
           <div className="rounded-full bg-muted/20 p-2">

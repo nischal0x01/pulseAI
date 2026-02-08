@@ -83,8 +83,11 @@ class BloodPressurePredictor:
     def __init__(self, model_path):
         self.model = None
         self.model_path = model_path
-        self.mean = 0.0
-        self.std = 1.0
+        # Separate normalization statistics for PPG and ECG
+        self.ppg_mean = 0.0
+        self.ppg_std = 1.0
+        self.ecg_mean = 0.0
+        self.ecg_std = 1.0
         
         if MODEL_AVAILABLE:
             self.load_model()
@@ -106,6 +109,43 @@ class BloodPressurePredictor:
         except Exception as e:
             logger.error(f"Error loading model: {e}")
             return False
+    
+    def calculate_signal_quality(self, ppg_buffer, ecg_buffer):
+        """
+        Calculate signal quality based on both PPG and ECG signals.
+        Returns a quality score between 0.0 and 1.0.
+        """
+        if len(ppg_buffer) < 100 or len(ecg_buffer) < 100:
+            return 0.0
+        
+        ppg_array = np.array(list(ppg_buffer)[-100:])  # Last 100 samples
+        ecg_array = np.array(list(ecg_buffer)[-100:])
+        
+        # Check PPG quality
+        ppg_std = np.std(ppg_array)
+        ppg_valid = ppg_std > 0.01 and not np.any(np.isnan(ppg_array)) and not np.any(np.isinf(ppg_array))
+        
+        # Check ECG quality
+        ecg_std = np.std(ecg_array)
+        ecg_valid = ecg_std > 0.01 and not np.any(np.isnan(ecg_array)) and not np.any(np.isinf(ecg_array))
+        
+        # Calculate quality score (0.0 to 1.0)
+        quality_score = 0.0
+        
+        if ppg_valid and ecg_valid:
+            # Both signals good
+            ppg_quality = min(1.0, ppg_std / 0.5)  # Normalize std to 0-1 range
+            ecg_quality = min(1.0, ecg_std / 0.5)
+            quality_score = (ppg_quality + ecg_quality) / 2.0
+        elif ppg_valid:
+            # Only PPG good
+            quality_score = min(0.5, ppg_std / 1.0)  # Max 50% if only PPG valid
+        elif ecg_valid:
+            # Only ECG good
+            quality_score = min(0.5, ecg_std / 1.0)  # Max 50% if only ECG valid
+        
+        # Ensure reasonable range
+        return max(0.0, min(1.0, quality_score))
     
     def downsample(self, signal):
         """Downsample signal."""
@@ -139,13 +179,16 @@ class BloodPressurePredictor:
         elif len(ecg_downsampled) > WINDOW_SIZE:
             ecg_downsampled = ecg_downsampled[:WINDOW_SIZE]
         
-        # Update running stats for normalization
-        self.mean = 0.9 * self.mean + 0.1 * np.mean(ppg_downsampled)
-        self.std = 0.9 * self.std + 0.1 * (np.std(ppg_downsampled) + 1e-6)
+        # Update running stats for normalization (separate for PPG and ECG)
+        self.ppg_mean = 0.9 * self.ppg_mean + 0.1 * np.mean(ppg_downsampled)
+        self.ppg_std = 0.9 * self.ppg_std + 0.1 * (np.std(ppg_downsampled) + 1e-6)
         
-        # Normalize signals
-        ppg_norm = (ppg_downsampled - self.mean) / (self.std + 1e-6)
-        ecg_norm = (ecg_downsampled - np.mean(ecg_downsampled)) / (np.std(ecg_downsampled) + 1e-6)
+        self.ecg_mean = 0.9 * self.ecg_mean + 0.1 * np.mean(ecg_downsampled)
+        self.ecg_std = 0.9 * self.ecg_std + 0.1 * (np.std(ecg_downsampled) + 1e-6)
+        
+        # Normalize signals with their respective running statistics
+        ppg_norm = (ppg_downsampled - self.ppg_mean) / (self.ppg_std + 1e-6)
+        ecg_norm = (ecg_downsampled - self.ecg_mean) / (self.ecg_std + 1e-6)
         
         signals = np.stack([ppg_norm, ecg_norm], axis=0)
         signals = signals[np.newaxis, :, :]
@@ -478,6 +521,9 @@ async def broadcast_loop():
             hr_buffer.append(heart_rate)
             sample_count += 1
             
+            # Calculate signal quality based on both PPG and ECG
+            signal_quality = predictor.calculate_signal_quality(ppg_buffer, ecg_buffer) if predictor else 0.0
+            
             # Broadcast PPG and ECG signals
             await manager.broadcast({
                 'type': 'signal_data',
@@ -486,7 +532,7 @@ async def broadcast_loop():
                     'ppg_value': ppg_filtered,
                     'ecg_value': ecg_filtered,
                     'sample_rate': PPG_SAMPLE_RATE,
-                    'quality': 0.85,
+                    'quality': signal_quality,
                     'heart_rate': heart_rate
                 }
             })
@@ -494,36 +540,53 @@ async def broadcast_loop():
             # Make prediction
             if len(ppg_buffer) >= BUFFER_SIZE and len(ecg_buffer) >= BUFFER_SIZE and sample_count % UPDATE_INTERVAL == 0:
                 if predictor and predictor.model:
-                    ppg_window = np.array(list(ppg_buffer))
-                    ecg_window = np.array(list(ecg_buffer))
-                    
-                    # Use sensor HR if available and non-zero
-                    hr_window = None
-                    if len(hr_buffer) >= BUFFER_SIZE:
-                        hr_array = np.array(list(hr_buffer))
-                        # Only use sensor HR if values are reasonable (non-zero)
-                        if np.mean(hr_array) > 0:
-                            hr_window = hr_array
-                    
-                    sbp, dbp = predictor.predict(ppg_window, ecg_window, hr_window)
-                    
-                    if sbp is not None and dbp is not None:
-                        prediction_count += 1
-                        
-                        # Broadcast BP prediction
-                        bp_message = {
+                    # Check signal quality threshold - require at least 60% quality
+                    if signal_quality < 0.6:
+                        logger.warning(f"Signal quality too low ({signal_quality:.1%}) - skipping prediction. Connect both PPG and ECG sensors.")
+                        # Broadcast error message
+                        error_message = {
                             'type': 'bp_prediction',
                             'payload': {
-                                'sbp': round(sbp, 1),
-                                'dbp': round(dbp, 1),
+                                'sbp': None,
+                                'dbp': None,
                                 'timestamp': int(time.time() * 1000),
-                                'confidence': 0.85,
+                                'confidence': signal_quality,
+                                'error': 'Low signal quality - check sensor connections',
                                 'prediction_count': prediction_count
                             }
                         }
-                        await manager.broadcast(bp_message)
+                        await manager.broadcast(error_message)
+                    else:
+                        ppg_window = np.array(list(ppg_buffer))
+                        ecg_window = np.array(list(ecg_buffer))
                         
-                        logger.info(f"[{prediction_count:3d}] BP: {sbp:6.1f}/{dbp:5.1f} mmHg (sent to {len(manager.active_connections)} clients)")
+                        # Use sensor HR if available and non-zero
+                        hr_window = None
+                        if len(hr_buffer) >= BUFFER_SIZE:
+                            hr_array = np.array(list(hr_buffer))
+                            # Only use sensor HR if values are reasonable (non-zero)
+                            if np.mean(hr_array) > 0:
+                                hr_window = hr_array
+                        
+                        sbp, dbp = predictor.predict(ppg_window, ecg_window, hr_window)
+                        
+                        if sbp is not None and dbp is not None:
+                            prediction_count += 1
+                            
+                            # Broadcast BP prediction
+                            bp_message = {
+                                'type': 'bp_prediction',
+                                'payload': {
+                                    'sbp': round(sbp, 1),
+                                    'dbp': round(dbp, 1),
+                                    'timestamp': int(time.time() * 1000),
+                                    'confidence': signal_quality,
+                                    'prediction_count': prediction_count
+                                }
+                            }
+                            await manager.broadcast(bp_message)
+                            
+                            logger.info(f"[{prediction_count:3d}] BP: {sbp:6.1f}/{dbp:5.1f} mmHg (quality: {signal_quality:.1%}, sent to {len(manager.active_connections)} clients)")
         
         except Exception as e:
             logger.error(f"Broadcast loop error: {e}")

@@ -22,11 +22,12 @@ export interface SignalPacket {
 export interface BPPrediction {
   type: "bp_prediction"
   payload: {
-    sbp: number
-    dbp: number
+    sbp: number | null
+    dbp: number | null
     timestamp: number
     confidence: number
     prediction_count: number
+    error?: string
   }
 }
 
@@ -254,6 +255,15 @@ export class WebSocketManager {
   private handleBPPrediction(prediction: BPPrediction): void {
     if (!prediction.payload) {
       console.warn("[v0] BP prediction missing payload:", prediction)
+      return
+    }
+    
+    // Check for error state (low signal quality)
+    if (prediction.payload.error) {
+      console.warn("[v0] BP prediction error:", prediction.payload.error)
+      console.warn("[v0] Signal quality too low:", prediction.payload.confidence)
+      // Still emit the prediction so UI can show the error state
+      this.bpCallbacks.forEach((callback) => callback(prediction.payload))
       return
     }
     

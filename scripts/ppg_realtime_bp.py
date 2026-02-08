@@ -68,8 +68,11 @@ class BloodPressurePredictor:
             print("✓ Model loaded successfully")
             
             # Running stats for normalization (will be updated with real data)
-            self.mean = 0.0
-            self.std = 1.0
+            # Separate tracking for PPG and ECG
+            self.ppg_mean = 0.0
+            self.ppg_std = 1.0
+            self.ecg_mean = 0.0
+            self.ecg_std = 1.0
             
         except Exception as e:
             print(f"✗ Error loading model: {e}")
@@ -118,13 +121,16 @@ class BloodPressurePredictor:
         # Generate simulated ECG (in production, use real ECG)
         ecg_sim = self.simulate_ecg_from_ppg(ppg_downsampled)
         
-        # Update running stats for normalization
-        self.mean = 0.9 * self.mean + 0.1 * np.mean(ppg_downsampled)
-        self.std = 0.9 * self.std + 0.1 * (np.std(ppg_downsampled) + 1e-6)
+        # Update running stats for normalization (separate for PPG and ECG)
+        self.ppg_mean = 0.9 * self.ppg_mean + 0.1 * np.mean(ppg_downsampled)
+        self.ppg_std = 0.9 * self.ppg_std + 0.1 * (np.std(ppg_downsampled) + 1e-6)
         
-        # Normalize signals
-        ppg_norm = (ppg_downsampled - self.mean) / (self.std + 1e-6)
-        ecg_norm = (ecg_sim - np.mean(ecg_sim)) / (np.std(ecg_sim) + 1e-6)
+        self.ecg_mean = 0.9 * self.ecg_mean + 0.1 * np.mean(ecg_sim)
+        self.ecg_std = 0.9 * self.ecg_std + 0.1 * (np.std(ecg_sim) + 1e-6)
+        
+        # Normalize signals with their respective running statistics
+        ppg_norm = (ppg_downsampled - self.ppg_mean) / (self.ppg_std + 1e-6)
+        ecg_norm = (ecg_sim - self.ecg_mean) / (self.ecg_std + 1e-6)
         
         # Prepare signals in format expected by model: (samples, channels, timesteps)
         # We have: PPG (channel 0), ECG (channel 1)
