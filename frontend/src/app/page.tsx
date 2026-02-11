@@ -8,6 +8,7 @@ import { SignalMetrics } from "@/components/signal-metrics"
 import { ProjectOverviewSection } from "@/components/project-overview-section"
 import { TerminologiesSection } from "@/components/terminologies-section"
 import { AboutSection } from "@/components/about-section"
+import { PatientAnalysis } from "@/components/patient-analysis"
 import { useSignal } from "@/lib/signal-context"
 
 function MonitorDashboard() {
@@ -117,6 +118,13 @@ function MonitorDashboard() {
 
       {/* Project Overview Section */}
       <ProjectOverviewSection />
+
+      {/* Patient Analysis Section */}
+      <section id="patient-analysis" className="py-16 px-4 sm:px-6 lg:px-8 bg-muted/30">
+        <div className="mx-auto max-w-7xl">
+          <PatientAnalysis />
+        </div>
+      </section>
 
       {/* Terminologies Section */}
       <TerminologiesSection />
