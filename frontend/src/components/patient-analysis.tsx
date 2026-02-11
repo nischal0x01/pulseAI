@@ -1,12 +1,14 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Badge } from "@/components/ui/badge"
-import { Loader2, Activity, TrendingUp, TrendingDown, CheckCircle2, XCircle } from "lucide-react"
+import { Loader2, Activity, TrendingUp, TrendingDown, CheckCircle2, XCircle, Settings } from "lucide-react"
 import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 
 interface PatientMetrics {
   mae: number
@@ -46,13 +48,51 @@ interface PatientAnalysisData {
   }
 }
 
+interface CalibrationResult {
+  patient_id: string
+  method: string
+  stratify: string
+  n_calibration_samples: number
+  n_test_samples: number
+  calibration_params: {
+    sbp_slope: number
+    sbp_intercept: number
+    dbp_slope: number
+    dbp_intercept: number
+  }
+  test_metrics: {
+    before_calibration: {
+      sbp: { mae: number; rmse: number }
+      dbp: { mae: number; rmse: number }
+    }
+    after_calibration: {
+      sbp: { mae: number; rmse: number }
+      dbp: { mae: number; rmse: number }
+    }
+  }
+  improvement: {
+    sbp_mae: number
+    dbp_mae: number
+  }
+}
+
 export function PatientAnalysis() {
   const [patients, setPatients] = useState<string[]>([])
   const [selectedPatient, setSelectedPatient] = useState<string>("")
   const [analysisData, setAnalysisData] = useState<PatientAnalysisData | null>(null)
+  const [calibrationResult, setCalibrationResult] = useState<CalibrationResult | null>(null)
   const [loading, setLoading] = useState(false)
+  const [loadingCalibration, setLoadingCalibration] = useState(false)
   const [loadingPatients, setLoadingPatients] = useState(true)
   const [error, setError] = useState<string>("")
+  
+  // Calibration settings
+  const [nCalibrationSamples, setNCalibrationSamples] = useState(50)
+  const [calibrationMethod, setCalibrationMethod] = useState<"offset" | "linear">("offset")
+  const [stratifyBy, setStratifyBy] = useState<"sbp" | "dbp" | "both">("sbp")
+  
+  // Ref for scrolling to results
+  const resultsRef = useRef<HTMLDivElement>(null)
 
   // Fetch available patients on mount
   useEffect(() => {
@@ -83,6 +123,7 @@ export function PatientAnalysis() {
     try {
       setLoading(true)
       setError("")
+      setCalibrationResult(null)  // Clear previous calibration results
       
       const response = await fetch("http://localhost:8000/analyze-patient", {
         method: "POST",
@@ -92,6 +133,7 @@ export function PatientAnalysis() {
         body: JSON.stringify({
           patient_id: selectedPatient,
           n_samples: 10,
+          apply_calibration: true,  // Automatically use calibration if available
         }),
       })
 
@@ -102,11 +144,54 @@ export function PatientAnalysis() {
 
       const data = await response.json()
       setAnalysisData(data)
+      
+      // Scroll to results after a brief delay to ensure rendering is complete
+      setTimeout(() => {
+        resultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })
+      }, 100)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to analyze patient")
       console.error(err)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const calibratePatient = async () => {
+    if (!selectedPatient) return
+
+    try {
+      setLoadingCalibration(true)
+      setError("")
+      
+      const response = await fetch("http://localhost:8000/calibrate-patient", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          patient_id: selectedPatient,
+          n_calibration_samples: nCalibrationSamples,
+          method: calibrationMethod,
+          stratify: stratifyBy,
+        }),
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.detail || "Calibration failed")
+      }
+
+      const data = await response.json()
+      setCalibrationResult(data)
+      
+      // Re-analyze patient to show updated calibrated predictions
+      await analyzePatient()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to calibrate patient")
+      console.error(err)
+    } finally {
+      setLoadingCalibration(false)
     }
   }
 
@@ -198,9 +283,204 @@ export function PatientAnalysis() {
         </Alert>
       )}
 
+      {/* Calibration Section */}
+      {selectedPatient && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Settings className="h-5 w-5" />
+              Patient-Specific Calibration
+            </CardTitle>
+            <CardDescription>
+              Improve prediction accuracy using stratified sampling for personalized calibration
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {/* Number of Calibration Samples */}
+              <div className="space-y-2">
+                <Label htmlFor="n-samples">Calibration Samples</Label>
+                <Input
+                  id="n-samples"
+                  type="number"
+                  min={10}
+                  max={200}
+                  value={nCalibrationSamples}
+                  onChange={(e) => setNCalibrationSamples(parseInt(e.target.value) || 50)}
+                  disabled={loadingCalibration}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Number of samples for calibration (10-200)
+                </p>
+              </div>
+
+              {/* Calibration Method */}
+              <div className="space-y-2">
+                <Label htmlFor="method">Method</Label>
+                <Select
+                  value={calibrationMethod}
+                  onValueChange={(value: "offset" | "linear") => setCalibrationMethod(value)}
+                  disabled={loadingCalibration}
+                >
+                  <SelectTrigger id="method">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="offset">Offset (Simple)</SelectItem>
+                    <SelectItem value="linear">Linear Regression</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  {calibrationMethod === "offset" ? "Add constant offset" : "Linear transformation"}
+                </p>
+              </div>
+
+              {/* Stratification Strategy */}
+              <div className="space-y-2">
+                <Label htmlFor="stratify">Stratify By</Label>
+                <Select
+                  value={stratifyBy}
+                  onValueChange={(value: "sbp" | "dbp" | "both") => setStratifyBy(value)}
+                  disabled={loadingCalibration}
+                >
+                  <SelectTrigger id="stratify">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="sbp">SBP (Systolic)</SelectItem>
+                    <SelectItem value="dbp">DBP (Diastolic)</SelectItem>
+                    <SelectItem value="both">Both (Combined)</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Sampling strategy across BP range
+                </p>
+              </div>
+            </div>
+
+            <Button
+              onClick={calibratePatient}
+              disabled={!selectedPatient || loadingCalibration || loading}
+              className="w-full"
+            >
+              {loadingCalibration ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Calibrating...
+                </>
+              ) : (
+                <>
+                  <Settings className="mr-2 h-4 w-4" />
+                  Run Calibration
+                </>
+              )}
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Calibration Results */}
+      {calibrationResult && (
+        <Card className="border-green-200 bg-green-50/50">
+          <CardHeader>
+            <CardTitle className="text-green-700 flex items-center gap-2">
+              <CheckCircle2 className="h-5 w-5" />
+              Calibration Complete
+            </CardTitle>
+            <CardDescription>
+              Patient {calibrationResult.patient_id} calibrated using {calibrationResult.method} method
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* Calibration Parameters */}
+            <div>
+              <h4 className="font-semibold mb-2">Calibration Parameters</h4>
+              <div className="grid grid-cols-2 gap-2 text-sm">
+                <div className="flex justify-between">
+                  <span>SBP Slope:</span>
+                  <span className="font-mono">{calibrationResult.calibration_params.sbp_slope.toFixed(4)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>SBP Intercept:</span>
+                  <span className="font-mono">{calibrationResult.calibration_params.sbp_intercept.toFixed(2)} mmHg</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>DBP Slope:</span>
+                  <span className="font-mono">{calibrationResult.calibration_params.dbp_slope.toFixed(4)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>DBP Intercept:</span>
+                  <span className="font-mono">{calibrationResult.calibration_params.dbp_intercept.toFixed(2)} mmHg</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Improvement Metrics */}
+            <div>
+              <h4 className="font-semibold mb-2">Performance Improvement (Test Set)</h4>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* SBP Improvement */}
+                <div className="space-y-2">
+                  <p className="text-sm font-medium text-red-600">SBP (Systolic)</p>
+                  <div className="space-y-1 text-sm">
+                    <div className="flex justify-between">
+                      <span>Before MAE:</span>
+                      <span className="font-mono">{calibrationResult.test_metrics.before_calibration.sbp.mae.toFixed(2)} mmHg</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>After MAE:</span>
+                      <span className="font-mono font-bold text-green-600">
+                        {calibrationResult.test_metrics.after_calibration.sbp.mae.toFixed(2)} mmHg
+                      </span>
+                    </div>
+                    <div className="flex justify-between border-t pt-1">
+                      <span className="font-semibold">Improvement:</span>
+                      <span className="font-mono font-bold text-green-600">
+                        {calibrationResult.improvement.sbp_mae > 0 ? '-' : '+'}{Math.abs(calibrationResult.improvement.sbp_mae).toFixed(2)} mmHg
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* DBP Improvement */}
+                <div className="space-y-2">
+                  <p className="text-sm font-medium text-blue-600">DBP (Diastolic)</p>
+                  <div className="space-y-1 text-sm">
+                    <div className="flex justify-between">
+                      <span>Before MAE:</span>
+                      <span className="font-mono">{calibrationResult.test_metrics.before_calibration.dbp.mae.toFixed(2)} mmHg</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>After MAE:</span>
+                      <span className="font-mono font-bold text-green-600">
+                        {calibrationResult.test_metrics.after_calibration.dbp.mae.toFixed(2)} mmHg
+                      </span>
+                    </div>
+                    <div className="flex justify-between border-t pt-1">
+                      <span className="font-semibold">Improvement:</span>
+                      <span className="font-mono font-bold text-green-600">
+                        {calibrationResult.improvement.dbp_mae > 0 ? '-' : '+'}{Math.abs(calibrationResult.improvement.dbp_mae).toFixed(2)} mmHg
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <Alert>
+              <CheckCircle2 className="h-4 w-4" />
+              <AlertDescription>
+                Calibration used {calibrationResult.n_calibration_samples} samples and tested on {calibrationResult.n_test_samples} samples.
+                Future predictions for this patient will use these calibration parameters.
+              </AlertDescription>
+            </Alert>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Analysis Results */}
       {analysisData && (
-        <div className="space-y-6">
+        <div ref={resultsRef} className="space-y-6">
           {/* Summary Header */}
           <Card>
             <CardHeader>
@@ -390,13 +670,12 @@ export function PatientAnalysis() {
               {analysisData.calibrated ? (
                 <>
                   <strong>Calibrated predictions:</strong> Patient-specific calibration has been applied to improve accuracy.
+                  You can recalibrate using different parameters above if needed.
                 </>
               ) : (
                 <>
-                  <strong>Uncalibrated predictions:</strong> Run calibration to improve accuracy: 
-                  <code className="ml-2 px-2 py-1 bg-muted rounded text-xs">
-                    python calibration.py --patient {analysisData.patient_id} --n-samples 50
-                  </code>
+                  <strong>Uncalibrated predictions:</strong> Use the calibration section above to personalize the model
+                  for this patient and improve prediction accuracy.
                 </>
               )}
             </AlertDescription>
