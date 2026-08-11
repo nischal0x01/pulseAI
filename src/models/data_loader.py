@@ -131,7 +131,20 @@ def load_aggregate_data(processed_dir='../data/processed'):
         print("❌ Processed data directory not found.")
         return None, None, None, None, None
 
-    mat_files = sorted([f for f in os.listdir(processed_dir) if f.endswith('.mat')])
+    mat_files = sorted([f.name for f in processed_dir.iterdir() if f.is_file() and f.name.endswith('.mat')])
+    if not mat_files:
+        candidate_dirs = []
+        for root, _, files in os.walk(processed_dir):
+            current_mat_files = sorted([f for f in files if f.endswith('.mat')])
+            if current_mat_files:
+                candidate_dirs.append((Path(root), current_mat_files))
+
+        if candidate_dirs:
+            candidate_dirs.sort(key=lambda item: (-len(item[1]), len(str(item[0]))))
+            resolved_dir, mat_files = candidate_dirs[0]
+            print(f"⚠️  No .mat files at {processed_dir}, using {resolved_dir} instead.")
+            processed_dir = resolved_dir
+
     if not mat_files:
         print("❌ No .mat files found in the processed data directory.")
         return None, None, None, None, None
