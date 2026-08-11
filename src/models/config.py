@@ -70,10 +70,12 @@ import os
 
 # Check if running on Kaggle
 IS_KAGGLE = 'KAGGLE_KERNEL_RUN_TYPE' in os.environ or os.path.exists('/kaggle/input')
+BASE_DATA_DIR = os.environ.get('SCRATCH', os.path.join(os.path.dirname(__file__), '../..'))
 
 if IS_KAGGLE:
     print("🤖 Kaggle environment detected. Configuring paths...")
     KAGGLE_INPUT_DIR = '/kaggle/input'
+    BASE_DATA_DIR = '/kaggle/working'
     
     # Locate dataset path under /kaggle/input
     pulsedb_path = None
@@ -114,7 +116,6 @@ if IS_KAGGLE:
     print(f"   - PROCESSED_DATA_DIR: {PROCESSED_DATA_DIR}")
     print(f"   - CHECKPOINT_DIR: {CHECKPOINT_DIR}")
 else:
-    BASE_DATA_DIR = os.environ.get('SCRATCH', os.path.join(os.path.dirname(__file__), '../..'))
     RAW_DATA_DIR = os.path.join(BASE_DATA_DIR, 'data/raw')
     PROCESSED_DATA_DIR = os.path.join(BASE_DATA_DIR, 'data/processed')
     CHECKPOINT_DIR = os.path.join(BASE_DATA_DIR, 'checkpoints')

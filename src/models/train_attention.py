@@ -41,7 +41,7 @@ from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau, ModelCh
 from tensorflow.keras import backend as K
 
 # Import from our modules
-from config import EPOCHS, BATCH_SIZE, VERBOSE, PROCESSED_DATA_DIR, CHECKPOINT_DIR, RAW_DATA_DIR, BASE_DATA_DIR, SBP_LOSS_WEIGHT, EXTREME_BP_WEIGHT, RESUME_LR_REDUCTION_FACTOR, IS_KAGGLE
+from config import EPOCHS, BATCH_SIZE, VERBOSE, PROCESSED_DATA_DIR, CHECKPOINT_DIR, RAW_DATA_DIR, SBP_LOSS_WEIGHT, EXTREME_BP_WEIGHT, RESUME_LR_REDUCTION_FACTOR, IS_KAGGLE
 from data_loader import load_aggregate_data
 
 # Training configuration
