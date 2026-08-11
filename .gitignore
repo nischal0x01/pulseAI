@@ -31,3 +31,5 @@ bp_predictions.csv
 
 training_log_augmented.txt
 calibration
+
+uv.lock

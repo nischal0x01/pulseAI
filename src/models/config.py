@@ -66,9 +66,56 @@ EXTREME_BP_WEIGHT = 3.0  # High/Low BP weighted 5x more than normal BP (increase
 RESUME_LR_REDUCTION_FACTOR = 0.5  # Reduce LR by 50% when resuming
 
 # Paths configuration
-# Use environment variable SCRATCH for HPC systems, otherwise use project directory
 import os
-BASE_DATA_DIR = os.environ.get('SCRATCH', os.path.join(os.path.dirname(__file__), '../..'))
-RAW_DATA_DIR = os.path.join(BASE_DATA_DIR, 'data/raw')
-PROCESSED_DATA_DIR = os.path.join(BASE_DATA_DIR, 'data/processed')
-CHECKPOINT_DIR = os.path.join(BASE_DATA_DIR, 'checkpoints')
+
+# Check if running on Kaggle
+IS_KAGGLE = 'KAGGLE_KERNEL_RUN_TYPE' in os.environ or os.path.exists('/kaggle/input')
+
+if IS_KAGGLE:
+    print("🤖 Kaggle environment detected. Configuring paths...")
+    KAGGLE_INPUT_DIR = '/kaggle/input'
+    
+    # Locate dataset path under /kaggle/input
+    pulsedb_path = None
+    if os.path.exists(KAGGLE_INPUT_DIR):
+        try:
+            for name in os.listdir(KAGGLE_INPUT_DIR):
+                full_path = os.path.join(KAGGLE_INPUT_DIR, name)
+                if os.path.isdir(full_path) and ('pulsedb' in name.lower() or 'mimic' in name.lower()):
+                    pulsedb_path = full_path
+                    break
+        except Exception as e:
+            print(f"⚠️ Error scanning /kaggle/input: {e}")
+            
+    if pulsedb_path is None:
+        # Fallback if no matching name found: use first directory under /kaggle/input
+        try:
+            subdirs = [os.path.join(KAGGLE_INPUT_DIR, d) for d in os.listdir(KAGGLE_INPUT_DIR) if os.path.isdir(os.path.join(KAGGLE_INPUT_DIR, d))]
+            if subdirs:
+                pulsedb_path = subdirs[0]
+        except Exception:
+            pass
+            
+    if pulsedb_path:
+        print(f"📂 Found PulseDB dataset path: {pulsedb_path}")
+        RAW_DATA_DIR = pulsedb_path
+        if os.path.exists(os.path.join(pulsedb_path, 'processed')):
+            PROCESSED_DATA_DIR = os.path.join(pulsedb_path, 'processed')
+        elif os.path.exists(os.path.join(pulsedb_path, 'raw')):
+            PROCESSED_DATA_DIR = os.path.join(pulsedb_path, 'raw')
+        else:
+            PROCESSED_DATA_DIR = pulsedb_path
+    else:
+        print("⚠️ PulseDB dataset folder not found under /kaggle/input. Using default fallback.")
+        RAW_DATA_DIR = '/kaggle/input/mimiciii-pulsedb'
+        PROCESSED_DATA_DIR = '/kaggle/input/mimiciii-pulsedb'
+        
+    CHECKPOINT_DIR = '/kaggle/working/checkpoints'
+    print(f"   - PROCESSED_DATA_DIR: {PROCESSED_DATA_DIR}")
+    print(f"   - CHECKPOINT_DIR: {CHECKPOINT_DIR}")
+else:
+    BASE_DATA_DIR = os.environ.get('SCRATCH', os.path.join(os.path.dirname(__file__), '../..'))
+    RAW_DATA_DIR = os.path.join(BASE_DATA_DIR, 'data/raw')
+    PROCESSED_DATA_DIR = os.path.join(BASE_DATA_DIR, 'data/processed')
+    CHECKPOINT_DIR = os.path.join(BASE_DATA_DIR, 'checkpoints')
+

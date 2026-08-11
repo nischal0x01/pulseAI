@@ -41,7 +41,7 @@ from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau, ModelCh
 from tensorflow.keras import backend as K
 
 # Import from our modules
-from config import EPOCHS, BATCH_SIZE, VERBOSE, PROCESSED_DATA_DIR, CHECKPOINT_DIR, RAW_DATA_DIR, BASE_DATA_DIR, SBP_LOSS_WEIGHT, EXTREME_BP_WEIGHT, RESUME_LR_REDUCTION_FACTOR
+from config import EPOCHS, BATCH_SIZE, VERBOSE, PROCESSED_DATA_DIR, CHECKPOINT_DIR, RAW_DATA_DIR, BASE_DATA_DIR, SBP_LOSS_WEIGHT, EXTREME_BP_WEIGHT, RESUME_LR_REDUCTION_FACTOR, IS_KAGGLE
 from data_loader import load_aggregate_data
 
 # Training configuration
@@ -199,7 +199,11 @@ def main():
             # No metadata, but cache exists - assume data might have changed
             print(f"\n⚠️  No cache metadata found. Current data: {actual_patient_count} patients")
             print(f"   💡 To use new data, delete cache: rm {cache_path}")
-            user_input = input(f"   ❓ Force reprocess all data? (y/N): ")
+            if IS_KAGGLE:
+                user_input = 'n'
+                print("   🤖 Running on Kaggle. Automatically selected: N")
+            else:
+                user_input = input(f"   ❓ Force reprocess all data? (y/N): ")
             if user_input.lower() == 'y':
                 has_new_data = True
                 use_cache = False
@@ -617,7 +621,11 @@ def main():
             if sample_sbp_mae > 50 or sample_dbp_mae > 50:
                 print(f"   ⚠️  WARNING: Predictions are poor! Weights may not have loaded correctly.")
                 print(f"   💡 Expected MAE ~10-20 mmHg, got {sample_sbp_mae:.1f}/{sample_dbp_mae:.1f}")
-                user_input = input(f"   ❓ Continue anyway? (y/N): ")
+                if IS_KAGGLE:
+                    user_input = 'n'
+                    print("   🤖 Running on Kaggle. Automatically selected: N (training aborted to avoid garbage training)")
+                else:
+                    user_input = input(f"   ❓ Continue anyway? (y/N): ")
                 if user_input.lower() != 'y':
                     print(f"   ❌ Training aborted. Check checkpoint file.")
                     return None, None, None

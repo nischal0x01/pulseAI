@@ -1,0 +1,22 @@
+[project]
+name = "cuffless-blood-pressure"
+version = "0.1.0"
+requires-python = ">=3.11.8"
+dependencies = [
+    "fastapi>=0.141.1",
+    "ipykernel>=7.3.0",
+    "jupyter>=1.1.1",
+    "mat73>=0.65",
+    "matplotlib>=3.11.1",
+    "numpy>=2.4.6",
+    "pandas>=3.0.5",
+    "pydantic>=2.13.4",
+    "pyserial>=3.5",
+    "python-multipart>=0.0.32",
+    "scikit-learn>=1.9.0",
+    "scipy>=1.17.1",
+    "seaborn>=0.13.2",
+    "tensorflow>=2.21.0",
+    "uvicorn[standard]>=0.52.1",
+    "websockets>=17.0.1",
+]
