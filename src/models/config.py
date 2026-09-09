@@ -55,8 +55,9 @@ CONV1D_KERNEL_SIZE = 5
 LSTM_UNITS_1 = 128 
 LSTM_UNITS_2 = 64 
 ATTENTION_UNITS = 64  
-DENSE_UNITS = 64 
-DROPOUT_RATE = 0.3
+DENSE_UNITS = 64
+DROPOUT_RATE = 0.2
+L2_REG = 1e-4  # Moderate regularization: prevents overfitting without crushing gradients
 
 # Weighted loss configuration
 SBP_LOSS_WEIGHT = 2.0  # SBP weighted 3x more than DBP (increased for better focus)

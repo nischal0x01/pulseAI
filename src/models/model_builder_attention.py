@@ -27,18 +27,24 @@ try:
         LEARNING_RATE, GRADIENT_CLIP_NORM,
         CONV1D_FILTERS_1, CONV1D_FILTERS_2, CONV1D_KERNEL_SIZE,
         LSTM_UNITS_1, LSTM_UNITS_2, ATTENTION_UNITS,
-        DENSE_UNITS, DROPOUT_RATE, SBP_LOSS_WEIGHT
+        DENSE_UNITS, DROPOUT_RATE, SBP_LOSS_WEIGHT, L2_REG
     )
 except ImportError:
-    from config import (
-        LEARNING_RATE, GRADIENT_CLIP_NORM,
-        CONV1D_FILTERS_1, CONV1D_FILTERS_2, CONV1D_KERNEL_SIZE,
-        LSTM_UNITS_1, LSTM_UNITS_2, ATTENTION_UNITS,
-        DENSE_UNITS, DROPOUT_RATE, SBP_LOSS_WEIGHT
-    )
-
-# L2 Regularization strength (increased to prevent test set overfitting)
-L2_REG = 0.01  # Stronger regularization: prevents overfitting by penalizing large weights
+    try:
+        from config import (
+            LEARNING_RATE, GRADIENT_CLIP_NORM,
+            CONV1D_FILTERS_1, CONV1D_FILTERS_2, CONV1D_KERNEL_SIZE,
+            LSTM_UNITS_1, LSTM_UNITS_2, ATTENTION_UNITS,
+            DENSE_UNITS, DROPOUT_RATE, SBP_LOSS_WEIGHT, L2_REG
+        )
+    except ImportError:
+        from config import (
+            LEARNING_RATE, GRADIENT_CLIP_NORM,
+            CONV1D_FILTERS_1, CONV1D_FILTERS_2, CONV1D_KERNEL_SIZE,
+            LSTM_UNITS_1, LSTM_UNITS_2, ATTENTION_UNITS,
+            DENSE_UNITS, DROPOUT_RATE, SBP_LOSS_WEIGHT
+        )
+        L2_REG = 1e-4
 
 
 class WeightedHuberLoss(Loss):
