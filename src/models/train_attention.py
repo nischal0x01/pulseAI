@@ -16,24 +16,37 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import warnings
 import os
+import sys
 import json
 import pickle
 from datetime import datetime
 warnings.filterwarnings('ignore')
 
+# Ensure models directory is in python path
+_MODELS_DIR = os.path.dirname(os.path.abspath(__file__))
+if _MODELS_DIR not in sys.path:
+    sys.path.insert(0, _MODELS_DIR)
+
 # TensorFlow memory optimization for laptop training
 import tensorflow as tf
-# Limit TensorFlow to use only necessary CPU threads
-tf.config.threading.set_intra_op_parallelism_threads(2)
-tf.config.threading.set_inter_op_parallelism_threads(2)
+try:
+    # Limit TensorFlow to use only necessary CPU threads
+    tf.config.threading.set_intra_op_parallelism_threads(2)
+    tf.config.threading.set_inter_op_parallelism_threads(2)
+except RuntimeError:
+    pass
+
 # Enable memory growth to prevent TensorFlow from allocating all GPU memory at once
-physical_devices = tf.config.list_physical_devices('GPU')
-if physical_devices:
-    for device in physical_devices:
-        tf.config.experimental.set_memory_growth(device, True)
-    print(f"✅ GPU memory growth enabled for {len(physical_devices)} GPU(s)")
-else:
-    print("ℹ️  No GPU detected - training on CPU")
+try:
+    physical_devices = tf.config.list_physical_devices('GPU')
+    if physical_devices:
+        for device in physical_devices:
+            tf.config.experimental.set_memory_growth(device, True)
+        print(f"✅ GPU memory growth enabled for {len(physical_devices)} GPU(s)")
+    else:
+        print("ℹ️  No GPU detected - training on CPU")
+except RuntimeError:
+    pass
 
 from sklearn.preprocessing import StandardScaler
 from sklearn.impute import SimpleImputer
@@ -41,15 +54,19 @@ from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau, ModelCh
 from tensorflow.keras import backend as K
 
 # Import from our modules
-from config import EPOCHS, BATCH_SIZE, VERBOSE, PROCESSED_DATA_DIR, CHECKPOINT_DIR, RAW_DATA_DIR, SBP_LOSS_WEIGHT, EXTREME_BP_WEIGHT, RESUME_LR_REDUCTION_FACTOR, IS_KAGGLE
+from config import EPOCHS, BATCH_SIZE, VERBOSE, PROCESSED_DATA_DIR, CHECKPOINT_DIR, RAW_DATA_DIR, SBP_LOSS_WEIGHT, EXTREME_BP_WEIGHT, RESUME_LR_REDUCTION_FACTOR, IS_KAGGLE, L2_REG, DROPOUT_RATE
 from data_loader import load_aggregate_data
+import sys
 
 # Training configuration
 ENABLE_TWO_PHASE_TRAINING = False  # Set to True to freeze CNN layers and train LSTM+attention only
 RESUME_LR_REDUCTION_FACTOR = 0.5  # Reduce learning rate by this factor when resuming
 
+# Attention ablation flag (can be enabled via CLI flag --ablate-attention)
+ABLATE_ATTENTION = '--ablate-attention' in sys.argv or '--ablate' in sys.argv or os.environ.get('ABLATE_ATTENTION', '0') == '1'
+
 # Data augmentation configuration
-ENABLE_AUGMENTATION = False
+ENABLE_AUGMENTATION = True  # Enabled: augments high BP samples (SBP > 140) to counter data imbalance
 AUGMENTATION_FACTOR = 2.0  # Target 2x representation for high BP samples
 BP_THRESHOLD = 140  # SBP threshold to define "high BP" for augmentation
 AUGMENTATION_CONFIG = {
@@ -74,6 +91,7 @@ from augmentation import augment_high_bp_samples
 from model_builder_attention import (
     create_phys_informed_model,
     create_attention_visualization_model,
+    create_simple_cnn_gru_model,
     WeightedHuberLoss
 )
 from utils import _ensure_finite, _ensure_finite_1d, normalize_data
@@ -410,61 +428,6 @@ def main():
         y_test_sbp = y_sbp_absolute[test_mask]
         y_test_dbp = y_dbp_absolute[test_mask]
         
-        # ===== Step 6.6: Data Augmentation for High BP Samples =====
-        if ENABLE_AUGMENTATION:
-            print(f"\n🔄 STEP 6.6: Augmenting high BP samples (SBP > {BP_THRESHOLD} mmHg)...")
-            print(f"   - Augmentation factor: {AUGMENTATION_FACTOR}x")
-            print(f"   - Techniques: time warp (±{AUGMENTATION_CONFIG['warp_factor']*100:.0f}%), "
-                  f"amplitude scale (±{AUGMENTATION_CONFIG['scale_factor']*100:.0f}%), "
-                  f"noise (SNR {AUGMENTATION_CONFIG['snr_range'][0]}-{AUGMENTATION_CONFIG['snr_range'][1]} dB)")
-            
-            # Count high BP samples before augmentation
-            n_high_bp_before = (y_train_sbp > BP_THRESHOLD).sum()
-            n_total_before = len(y_train_sbp)
-            print(f"   - Training set before augmentation: {n_high_bp_before}/{n_total_before} "
-                  f"({100*n_high_bp_before/n_total_before:.1f}%) high BP samples")
-            
-            # Augment training data only (not validation or test)
-            X_train_phys, y_train_sbp, y_train_dbp = augment_high_bp_samples(
-                X_train_phys, y_train_sbp, y_train_dbp,
-                augmentation_factor=AUGMENTATION_FACTOR,
-                bp_threshold=BP_THRESHOLD,
-                augmentation_config=AUGMENTATION_CONFIG
-            )
-            
-            # Report results
-            n_high_bp_after = (y_train_sbp > BP_THRESHOLD).sum()
-            n_total_after = len(y_train_sbp)
-            print(f"   - Training set after augmentation: {n_high_bp_after}/{n_total_after} "
-                  f"({100*n_high_bp_after/n_total_after:.1f}%) high BP samples")
-            print(f"   ✅ Augmentation complete: {n_total_before} → {n_total_after} training samples")
-        else:
-            print("\n⏭️  STEP 6.6: Data augmentation disabled")
-        
-        # Final validation before training
-        print("\n✅ STEP 7: Final data validation...")
-        validate_data_integrity(X_train_phys, "Training features")
-        validate_data_integrity(X_val_phys, "Validation features")
-        validate_data_integrity(X_test_phys, "Test features")
-        validate_data_integrity(y_train_sbp, "Training SBP labels")
-        validate_data_integrity(y_val_sbp, "Validation SBP labels")
-        validate_data_integrity(y_test_sbp, "Test SBP labels")
-        validate_data_integrity(y_train_dbp, "Training DBP labels")
-        validate_data_integrity(y_val_dbp, "Validation DBP labels")
-        validate_data_integrity(y_test_dbp, "Test DBP labels")
-        
-        print(f"\n📐 Data shapes:")
-        print(f"   X_train: {X_train_phys.shape}")
-        print(f"   y_train_sbp: {y_train_sbp.shape}, y_train_dbp: {y_train_dbp.shape}")
-        print(f"   X_val: {X_val_phys.shape}")
-        print(f"   y_val_sbp: {y_val_sbp.shape}, y_val_dbp: {y_val_dbp.shape}")
-        print(f"   X_test: {X_test_phys.shape}")
-        print(f"   y_test_sbp: {y_test_sbp.shape}, y_test_dbp: {y_test_dbp.shape}")
-        
-        # Verify 4 channels
-        assert X_train_phys.shape[-1] == 4, "Expected 4 channels: [ECG, PPG, PAT, HR]"
-        print(f"   ✅ Verified 4 channels: [ECG, PPG, PAT, HR]")
-        
         # ===== Step 7.5: Cache Preprocessed Data =====
         cache_path = os.path.join(CHECKPOINT_DIR, 'preprocessed_data_cache.npz')
         print(f"\n💾 STEP 7.5: Caching preprocessed data for future runs...")
@@ -488,7 +451,8 @@ def main():
                 y_sbp=y_sbp,
                 y_dbp=y_dbp,
                 val_mask=val_mask,
-                test_mask=test_mask
+                test_mask=test_mask,
+                augmented=False
             )
             cache_size_mb = os.path.getsize(cache_path) / (1024 * 1024)
             print(f"   ✅ Data cached successfully! ({cache_size_mb:.1f} MB)")
@@ -504,6 +468,72 @@ def main():
         except Exception as e:
             print(f"   ⚠️  Failed to cache data: {e}")
             print(f"   Training will continue normally...")
+
+    # ===== Step 6.6: Data Augmentation for High BP Samples =====
+    # Check if loaded cache was already marked as augmented
+    is_cached_augmented = False
+    if use_cache and 'cache_data' in locals():
+        try:
+            if 'augmented' in cache_data and bool(cache_data['augmented']):
+                is_cached_augmented = True
+        except Exception:
+            pass
+            
+    if ENABLE_AUGMENTATION and not is_cached_augmented:
+        print(f"\n🔄 STEP 6.6: Augmenting high BP samples (SBP > {BP_THRESHOLD} mmHg)...")
+        print(f"   - Augmentation factor: {AUGMENTATION_FACTOR}x")
+        print(f"   - Techniques: time warp (±{AUGMENTATION_CONFIG['warp_factor']*100:.0f}%), "
+              f"amplitude scale (±{AUGMENTATION_CONFIG['scale_factor']*100:.0f}%), "
+              f"noise (SNR {AUGMENTATION_CONFIG['snr_range'][0]}-{AUGMENTATION_CONFIG['snr_range'][1]} dB)")
+        
+        # Count high BP samples before augmentation
+        n_high_bp_before = int((y_train_sbp > BP_THRESHOLD).sum())
+        n_total_before = len(y_train_sbp)
+        print(f"   - Training set before augmentation: {n_high_bp_before}/{n_total_before} "
+              f"({100*n_high_bp_before/n_total_before:.1f}%) high BP samples")
+        
+        # Augment training data only (not validation or test)
+        X_train_phys, y_train_sbp, y_train_dbp = augment_high_bp_samples(
+            X_train_phys, y_train_sbp, y_train_dbp,
+            augmentation_factor=AUGMENTATION_FACTOR,
+            bp_threshold=BP_THRESHOLD,
+            augmentation_config=AUGMENTATION_CONFIG
+        )
+        
+        # Report results
+        n_high_bp_after = int((y_train_sbp > BP_THRESHOLD).sum())
+        n_total_after = len(y_train_sbp)
+        print(f"   - Training set after augmentation: {n_high_bp_after}/{n_total_after} "
+              f"({100*n_high_bp_after/n_total_after:.1f}%) high BP samples")
+        print(f"   ✅ Augmentation complete: {n_total_before} → {n_total_after} training samples")
+    elif is_cached_augmented:
+        print("\nℹ️  STEP 6.6: Using cached data that is already augmented.")
+    else:
+        print("\n⏭️  STEP 6.6: Data augmentation disabled")
+    
+    # Final validation before training
+    print("\n✅ STEP 7: Final data validation...")
+    validate_data_integrity(X_train_phys, "Training features")
+    validate_data_integrity(X_val_phys, "Validation features")
+    validate_data_integrity(X_test_phys, "Test features")
+    validate_data_integrity(y_train_sbp, "Training SBP labels")
+    validate_data_integrity(y_val_sbp, "Validation SBP labels")
+    validate_data_integrity(y_test_sbp, "Test SBP labels")
+    validate_data_integrity(y_train_dbp, "Training DBP labels")
+    validate_data_integrity(y_val_dbp, "Validation DBP labels")
+    validate_data_integrity(y_test_dbp, "Test DBP labels")
+    
+    print(f"\n📐 Data shapes for model input:")
+    print(f"   X_train: {X_train_phys.shape}")
+    print(f"   y_train_sbp: {y_train_sbp.shape}, y_train_dbp: {y_train_dbp.shape}")
+    print(f"   X_val: {X_val_phys.shape}")
+    print(f"   y_val_sbp: {y_val_sbp.shape}, y_val_dbp: {y_val_dbp.shape}")
+    print(f"   X_test: {X_test_phys.shape}")
+    print(f"   y_test_sbp: {y_test_sbp.shape}, y_test_dbp: {y_test_dbp.shape}")
+    
+    # Verify 4 channels
+    assert X_train_phys.shape[-1] == 4, "Expected 4 channels: [ECG, PPG, PAT, HR]"
+    print(f"   ✅ Verified 4 channels: [ECG, PPG, PAT, HR]")
     
     # ===== Step 8: Build Model with Weighted Loss =====
     print("\n🏗️  STEP 8: Building physiology-informed CNN-LSTM model with weighted loss...")
@@ -559,7 +589,11 @@ def main():
     print(f"   - Extreme BP weight: {EXTREME_BP_WEIGHT}x (high/low BP prioritized)")
     print(f"   - Normal BP range: 90-140 mmHg (weight 1.0x)")
     
-    phys_informed_model = create_phys_informed_model(phys_input_shape)
+    if ABLATE_ATTENTION:
+        print("\n🔬 ATTENTION ABLATION: Building Simple CNN+GRU model (no PAT attention gate)...")
+        phys_informed_model = create_simple_cnn_gru_model(phys_input_shape)
+    else:
+        phys_informed_model = create_phys_informed_model(phys_input_shape)
     
     print("\n📋 Model Architecture:")
     phys_informed_model.summary()
@@ -720,10 +754,11 @@ def main():
                 print(f"   ✅ ModelCheckpoint initialized with previous best: {self.best:.4f}")
     
     callbacks_list = [
-        # Early stopping to prevent overfitting
+        # Early stopping to prevent overfitting (with min_delta to filter noisy fluctuations)
         EarlyStopping(
             monitor='val_loss',
             patience=15,
+            min_delta=0.001,
             restore_best_weights=True,
             verbose=1
         ),
@@ -1038,7 +1073,12 @@ def main():
     metadata = {
         'run_timestamp': training_start_time.isoformat(),
         'training_mode': 'resumed' if is_resuming else 'fresh',
+        'attention_ablated': ABLATE_ATTENTION,
+        'model_architecture': 'Simple_CNN_GRU' if ABLATE_ATTENTION else 'PhysInformed_CNN_LSTM_Attention',
         'two_phase_training': ENABLE_TWO_PHASE_TRAINING and is_resuming,
+        'data_augmentation_enabled': ENABLE_AUGMENTATION,
+        'l2_regularization': L2_REG,
+        'dropout_rate': DROPOUT_RATE,
         'initial_learning_rate': float(initial_lr),
         'final_learning_rate': float(K.get_value(phys_informed_model.optimizer.learning_rate)),
         'training_duration_seconds': training_duration,

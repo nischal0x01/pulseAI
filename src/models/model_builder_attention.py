@@ -13,7 +13,7 @@ Architecture:
 import tensorflow as tf
 from tensorflow.keras.models import Model
 from tensorflow.keras.layers import (
-    Input, Conv1D, MaxPooling1D, Dropout, Dense, LSTM, 
+    Input, Conv1D, MaxPooling1D, Dropout, Dense, LSTM, GRU,
     BatchNormalization, Multiply, Softmax, Lambda, Reshape,
     GlobalAveragePooling1D, Concatenate, Activation
 )
@@ -167,21 +167,22 @@ def create_pat_attention_layer(pat_channel, cnn_features, name_prefix="pat_atten
     return attended_features, attention_weights
 
 
-def create_phys_informed_cnn_lstm_attention(input_shape, return_attention=False):
+def create_phys_informed_cnn_lstm_attention(input_shape, return_attention=False, use_attention=True):
     """
-    Build physiology-informed CNN-LSTM model with PAT-based attention.
+    Build physiology-informed CNN-LSTM model with optional PAT-based attention.
     
     Architecture:
     - 4-channel input: [ECG, PPG, PAT, HR]
     - CNN layers extract local features from all channels
-    - PAT channel generates attention weights
-    - Attention reweights CNN features
+    - PAT channel generates attention weights (if use_attention=True)
+    - Attention reweights CNN features (if use_attention=True)
     - Bidirectional LSTM models temporal dynamics
     - Dense layers regress blood pressure
     
     Args:
         input_shape: Tuple (timesteps, channels) - expects 4 channels
         return_attention: If True, return attention weights for visualization
+        use_attention: If False, ablates the attention mechanism
         
     Returns:
         Keras Model
@@ -210,17 +211,22 @@ def create_phys_informed_cnn_lstm_attention(input_shape, return_attention=False)
     cnn_features = MaxPooling1D(2, name='pool_2')(x)
     cnn_features = Dropout(DROPOUT_RATE, name='dropout_2')(cnn_features)
     
-    # ===== PAT-based Attention Mechanism =====
-    # Extract PAT channel (index 2) and downsample to match CNN features
-    pat_channel = Lambda(lambda x: x[:, :, 2:3], name='extract_pat')(inputs)
-    
-    # Downsample PAT to match pooled features (2 pooling layers with stride 2)
-    pat_downsampled = MaxPooling1D(4, name='pat_downsample')(pat_channel)
-    
-    # Generate attention weights from PAT
-    attended_features, attention_weights = create_pat_attention_layer(
-        pat_downsampled, cnn_features, name_prefix='pat_attention'
-    )
+    # ===== PAT-based Attention Mechanism (or Ablation) =====
+    if use_attention:
+        # Extract PAT channel (index 2) and downsample to match CNN features
+        pat_channel = Lambda(lambda x: x[:, :, 2:3], name='extract_pat')(inputs)
+        
+        # Downsample PAT to match pooled features (2 pooling layers with stride 2)
+        pat_downsampled = MaxPooling1D(4, name='pat_downsample')(pat_channel)
+        
+        # Generate attention weights from PAT
+        attended_features, attention_weights = create_pat_attention_layer(
+            pat_downsampled, cnn_features, name_prefix='pat_attention'
+        )
+    else:
+        # Attention ablated: pass CNN features directly to temporal model
+        attended_features = cnn_features
+        attention_weights = None
     
     # ===== LSTM Temporal Modeling =====
     # Bidirectional LSTM to capture forward and backward cardiovascular dynamics
@@ -301,38 +307,72 @@ def create_attention_visualization_model(input_shape):
 # Legacy function for backward compatibility
 def create_simple_cnn_gru_model(input_shape):
     """
-    Simple CNN + GRU model (legacy architecture without attention).
-    Kept for comparison purposes.
+    Ablation model: Simple CNN + GRU architecture without PAT attention.
+    Dual output for SBP and DBP with WeightedHuberLoss for direct comparison.
+    
+    Args:
+        input_shape: Tuple (timesteps, channels) - expects 4 channels
+        
+    Returns:
+        Compiled Keras Model
     """
-    from tensorflow.keras.models import Sequential
-    from tensorflow.keras.layers import GRU
+    inputs = Input(shape=input_shape, name='input')
     
-    model = Sequential([
-        Conv1D(CONV1D_FILTERS_1, CONV1D_KERNEL_SIZE, 
-               activation="relu", input_shape=input_shape, padding="same",
-               kernel_regularizer=l2(L2_REG)),
-        BatchNormalization(),
-        MaxPooling1D(2),
-        Dropout(DROPOUT_RATE),
-        Conv1D(CONV1D_FILTERS_2, CONV1D_KERNEL_SIZE, 
+    # ===== CNN Feature Extraction =====
+    x = Conv1D(CONV1D_FILTERS_1, CONV1D_KERNEL_SIZE, 
                activation="relu", padding="same",
-               kernel_regularizer=l2(L2_REG)),
-        BatchNormalization(),
-        MaxPooling1D(2),
-        Dropout(DROPOUT_RATE),
-        GRU(LSTM_UNITS_1, return_sequences=True,
-            kernel_regularizer=l2(L2_REG),
-            recurrent_regularizer=l2(L2_REG)),
-        Dropout(DROPOUT_RATE),
-        GRU(LSTM_UNITS_2,
-            kernel_regularizer=l2(L2_REG),
-            recurrent_regularizer=l2(L2_REG)),
-        Dropout(DROPOUT_RATE),
-        Dense(DENSE_UNITS, activation="relu",
-              kernel_regularizer=l2(L2_REG)),
-        Dense(1),
-    ], name='Simple_CNN_GRU')
+               kernel_regularizer=l2(L2_REG), name='conv1d_1')(inputs)
+    x = BatchNormalization(name='bn_1')(x)
+    x = MaxPooling1D(2, name='pool_1')(x)
+    x = Dropout(DROPOUT_RATE, name='dropout_1')(x)
     
-    optimizer = Adam(learning_rate=LEARNING_RATE)
-    model.compile(optimizer=optimizer, loss=Huber(), metrics=["mae"])
+    x = Conv1D(CONV1D_FILTERS_2, CONV1D_KERNEL_SIZE, 
+               activation="relu", padding="same",
+               kernel_regularizer=l2(L2_REG), name='conv1d_2')(x)
+    x = BatchNormalization(name='bn_2')(x)
+    x = MaxPooling1D(2, name='pool_2')(x)
+    x = Dropout(DROPOUT_RATE, name='dropout_2')(x)
+    
+    # ===== GRU Temporal Modeling (No Attention) =====
+    x = GRU(LSTM_UNITS_1, return_sequences=True,
+            kernel_regularizer=l2(L2_REG),
+            recurrent_regularizer=l2(L2_REG), name='gru_1')(x)
+    x = Dropout(DROPOUT_RATE, name='dropout_3')(x)
+    
+    x = GRU(LSTM_UNITS_2, return_sequences=False,
+            kernel_regularizer=l2(L2_REG),
+            recurrent_regularizer=l2(L2_REG), name='gru_2')(x)
+    x = Dropout(DROPOUT_RATE, name='dropout_4')(x)
+    
+    # ===== Blood Pressure Regression =====
+    dense = Dense(DENSE_UNITS, activation="relu",
+                  kernel_regularizer=l2(L2_REG), name='dense_1')(x)
+    dense = Dropout(DROPOUT_RATE, name='dropout_5')(dense)
+    
+    # Dual outputs: SBP and DBP
+    sbp_output = Dense(1, activation='linear', name='sbp_output')(dense)
+    dbp_output = Dense(1, activation='linear', name='dbp_output')(dense)
+    
+    model = Model(inputs=inputs, outputs=[sbp_output, dbp_output], name='Simple_CNN_GRU_Dual')
+    
+    optimizer = Adam(
+        learning_rate=LEARNING_RATE,
+        clipnorm=GRADIENT_CLIP_NORM
+    )
+    
+    model.compile(
+        optimizer=optimizer,
+        loss={
+            'sbp_output': WeightedHuberLoss(delta=1.0),
+            'dbp_output': WeightedHuberLoss(delta=1.0)
+        },
+        loss_weights={
+            'sbp_output': SBP_LOSS_WEIGHT,
+            'dbp_output': 1.0
+        },
+        metrics={
+            'sbp_output': ['mae', 'mse'],
+            'dbp_output': ['mae', 'mse']
+        }
+    )
     return model
