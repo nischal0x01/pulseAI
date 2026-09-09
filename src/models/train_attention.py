@@ -106,16 +106,20 @@ plt.rcParams['figure.figsize'] = (12, 8)
 def get_data_hash():
     """
     Generate hash of processed data directory to detect new data additions.
+    Walks subdirectories (MIMICIII-1, MIMICIII-2, etc.) to find all .mat files.
     Returns hash string and list of patient files.
     """
     import hashlib
     
     patient_files = []
-    for file in sorted(os.listdir(PROCESSED_DATA_DIR)):
-        if file.endswith('.mat'):
-            filepath = os.path.join(PROCESSED_DATA_DIR, file)
-            # Include filename and modified time in hash
-            patient_files.append(file)
+    # Walk all subdirectories to find .mat files (handles MIMICIII-1/2/3 layout)
+    for root, _, files in os.walk(PROCESSED_DATA_DIR):
+        for f in sorted(files):
+            if f.endswith('.mat'):
+                # Store relative path to handle multi-dir layout
+                rel = os.path.relpath(os.path.join(root, f), PROCESSED_DATA_DIR)
+                patient_files.append(rel)
+    patient_files = sorted(patient_files)
     
     # Create hash from sorted file list
     files_str = '|'.join(patient_files)
@@ -189,6 +193,20 @@ def validate_data_integrity(data, name):
 
 def main():
     """Main training pipeline with transfer learning support."""
+    
+    # On Kaggle, always wipe stale cache — previous runs only loaded 49 patients
+    # from MIMICIII-1. Now we load 500 from all subdirectories, so the cache
+    # will always be stale and must be regenerated.
+    if IS_KAGGLE:
+        stale_files = [
+            os.path.join(CHECKPOINT_DIR, 'preprocessed_data_cache.npz'),
+            os.path.join(CHECKPOINT_DIR, 'training_state.pkl'),
+            os.path.join(CHECKPOINT_DIR, 'cache_metadata.json'),
+        ]
+        for stale in stale_files:
+            if os.path.exists(stale):
+                os.remove(stale)
+                print(f"🗑️  Cleared stale cache: {os.path.basename(stale)}")
     
     # Check for cached preprocessed data and detect new data
     cache_path = os.path.join(CHECKPOINT_DIR, 'preprocessed_data_cache.npz')
@@ -691,17 +709,22 @@ def main():
     print("\n⚖️  STEP 8.5: Calculating sample weights for extreme BP focus...")
     
     def calculate_sample_weights(y_sbp, y_dbp):
-        """Give more weight to extreme BP samples during training."""
+        """Give mild extra weight to extreme BP samples during training.
+        
+        Weights are intentionally conservative — WeightedHuberLoss and data
+        augmentation already emphasize extremes. Stacking all three caused
+        a compounding 12–96x penalty that biased the model toward over-prediction.
+        """
         weights = np.ones(len(y_sbp))
         
-        # High BP samples: 5x weight
-        weights[y_sbp > 140] = 5.0
+        # High BP samples: 1.5x weight
+        weights[y_sbp > 140] = 1.5
         
-        # Low BP samples: 5x weight  
-        weights[y_sbp < 90] = 5.0
+        # Low BP samples: 1.5x weight
+        weights[y_sbp < 90] = 1.5
         
-        # Very low BP: 8x weight (main problem area from patient analysis)
-        weights[y_sbp < 75] = 8.0
+        # Very low BP: 2x weight (most underrepresented)
+        weights[y_sbp < 75] = 2.0
         
         return weights
     
@@ -710,23 +733,23 @@ def main():
     
     # Count weighted samples
     normal_count = int(np.sum(train_sample_weights == 1.0))
-    high_count = int(np.sum((train_sample_weights == 5.0) & (y_train_sbp > 140)))
-    low_count = int(np.sum((train_sample_weights == 5.0) & (y_train_sbp >= 75) & (y_train_sbp < 90)))
-    very_low_count = int(np.sum(train_sample_weights == 8.0))
+    high_count = int(np.sum((train_sample_weights == 1.5) & (y_train_sbp > 140)))
+    low_count = int(np.sum((train_sample_weights == 1.5) & (y_train_sbp >= 75) & (y_train_sbp < 90)))
+    very_low_count = int(np.sum(train_sample_weights == 2.0))
     
     print(f"   - Normal BP samples (90-140 mmHg): {normal_count} (weight: 1.0x)")
-    print(f"   - High BP samples (>140 mmHg): {high_count} (weight: 5.0x)")
-    print(f"   - Low BP samples (75-90 mmHg): {low_count} (weight: 5.0x)")
-    print(f"   - Very low BP samples (<75 mmHg): {very_low_count} (weight: 8.0x)")
+    print(f"   - High BP samples (>140 mmHg): {high_count} (weight: 1.5x)")
+    print(f"   - Low BP samples (75-90 mmHg): {low_count} (weight: 1.5x)")
+    print(f"   - Very low BP samples (<75 mmHg): {very_low_count} (weight: 2.0x)")
     print(f"   - Effective training size: {np.sum(train_sample_weights):.0f} weighted samples")
     
     if very_low_count > 0:
-        print(f"   ✅ Very low BP samples will be emphasized {very_low_count} × 8 = {very_low_count * 8} effective samples")
+        print(f"   ✅ Very low BP samples will be emphasized {very_low_count} × 2 = {very_low_count * 2} effective samples")
     else:
         print(f"   ⚠️  No very low BP samples (<75 mmHg) in training set!")
     
     if high_count > 0:
-        print(f"   ✅ High BP samples will be emphasized {high_count} × 5 = {high_count * 5} effective samples")
+        print(f"   ✅ High BP samples will be emphasized {high_count} × 1.5 = {int(high_count * 1.5)} effective samples")
     else:
         print(f"   ⚠️  No high BP samples (>140 mmHg) in training set!")
     

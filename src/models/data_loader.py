@@ -124,37 +124,76 @@ def _read_subj_wins(path, field='Subj_Wins', sample_limit=None):
     return sigs, sbp_arr, dbp_arr, demographics
 
 
-def load_aggregate_data(processed_dir='../data/processed'):
-    """Load and aggregate data from all patient .mat files."""
+def load_aggregate_data(processed_dir='../data/processed', max_patients=None):
+    """Load and aggregate data from all patient .mat files across all subdirectories.
+    
+    Args:
+        processed_dir: Root directory to search for .mat files (recursively).
+        max_patients: Maximum number of patient files to load. If None, uses
+                      MAX_PATIENTS from config. Set to 0 or negative to load all.
+    """
+    from pathlib import Path
+    import random
+    
+    # Import MAX_PATIENTS from config as default
+    if max_patients is None:
+        try:
+            from config import MAX_PATIENTS
+            max_patients = MAX_PATIENTS
+        except (ImportError, AttributeError):
+            max_patients = 0  # Load all if config not available
+    
     processed_dir = Path(processed_dir)
     if not processed_dir.exists():
         print("❌ Processed data directory not found.")
         return None, None, None, None, None
 
-    mat_files = sorted([f.name for f in processed_dir.iterdir() if f.is_file() and f.name.endswith('.mat')])
-    if not mat_files:
-        candidate_dirs = []
+    # Collect .mat files from the top-level directory
+    mat_entries = []  # list of (directory_path, filename)
+    top_level_mats = sorted([f.name for f in processed_dir.iterdir() if f.is_file() and f.name.endswith('.mat')])
+    for fname in top_level_mats:
+        mat_entries.append((processed_dir, fname))
+    
+    # If no .mat files at top level, or even if there are, also scan subdirectories
+    if not top_level_mats:
+        # Walk all subdirectories to find .mat files
         for root, _, files in os.walk(processed_dir):
+            root_path = Path(root)
+            if root_path == processed_dir:
+                continue  # Already scanned top level
             current_mat_files = sorted([f for f in files if f.endswith('.mat')])
-            if current_mat_files:
-                candidate_dirs.append((Path(root), current_mat_files))
-
-        if candidate_dirs:
-            candidate_dirs.sort(key=lambda item: (-len(item[1]), len(str(item[0]))))
-            resolved_dir, mat_files = candidate_dirs[0]
-            print(f"⚠️  No .mat files at {processed_dir}, using {resolved_dir} instead.")
-            processed_dir = resolved_dir
-
-    if not mat_files:
-        print("❌ No .mat files found in the processed data directory.")
+            for fname in current_mat_files:
+                mat_entries.append((root_path, fname))
+    
+    if not mat_entries:
+        print("❌ No .mat files found in the processed data directory or subdirectories.")
         return None, None, None, None, None
-
+    
+    # Report discovery
+    dirs_found = set(str(d) for d, _ in mat_entries)
+    print(f"📂 Discovered {len(mat_entries)} .mat files across {len(dirs_found)} directory(ies):")
+    for d in sorted(dirs_found):
+        count = sum(1 for dd, _ in mat_entries if str(dd) == d)
+        print(f"   - {d}: {count} files")
+    
+    # Apply max_patients cap with shuffled sampling for representative coverage
+    if max_patients and max_patients > 0 and len(mat_entries) > max_patients:
+        print(f"\n⚠️  Capping at {max_patients} patients (out of {len(mat_entries)} available) for memory safety.")
+        print(f"   Shuffling for representative sampling across all subdirectories...")
+        random.seed(42)  # Reproducible sampling
+        random.shuffle(mat_entries)
+        mat_entries = mat_entries[:max_patients]
+        # Re-sort for deterministic loading order
+        mat_entries.sort(key=lambda x: (str(x[0]), x[1]))
+    
     all_signals, all_sbp_labels, all_dbp_labels, all_demographics, all_patient_ids = [], [], [], [], []
 
-    print(f"🔄 Loading data from {len(mat_files)} patient files...")
-    for file_name in mat_files:
+    print(f"\n🔄 Loading data from {len(mat_entries)} patient files...")
+    loaded_count = 0
+    failed_count = 0
+    for dir_path, file_name in mat_entries:
         patient_id = file_name.split('.')[0]
-        file_path = str(processed_dir / file_name)
+        file_path = str(dir_path / file_name)
 
         signals, sbp, dbp, demographics = None, None, None, None
 
@@ -178,6 +217,7 @@ def load_aggregate_data(processed_dir='../data/processed'):
                 demographics = np.column_stack([age, gender, height, weight])
             else:
                 print(f"   ❌ Could not find 'Subj_Wins' structure in {file_name} using scipy. Skipping file.")
+                failed_count += 1
                 continue
 
         except Exception as e:
@@ -188,9 +228,11 @@ def load_aggregate_data(processed_dir='../data/processed'):
                     signals, sbp, dbp, demographics = _read_subj_wins(file_path)
                 except Exception as h5_e:
                     print(f"   ❌ Failed to load {file_name} with HDF5 reader. Error: {h5_e}")
+                    failed_count += 1
                     continue
             else:
                 print(f"   ❌ Failed to load {file_name} with scipy.io.loadmat. Error: {e}")
+                failed_count += 1
                 continue
 
         if signals is not None and len(signals) > 0:
@@ -199,10 +241,17 @@ def load_aggregate_data(processed_dir='../data/processed'):
             all_dbp_labels.append(dbp)
             all_demographics.append(demographics)
             all_patient_ids.extend([patient_id] * len(signals))
+            loaded_count += 1
+            
+            # Progress reporting every 50 patients
+            if loaded_count % 50 == 0:
+                print(f"   📊 Loaded {loaded_count}/{len(mat_entries)} patients...")
 
     if not all_signals:
         print("❌ No data could be loaded from any files.")
         return None, None, None, None, None
+
+    print(f"\n   ✅ Successfully loaded {loaded_count} patients ({failed_count} failed)")
 
     # Concatenate all data
     signals_agg = np.vstack(all_signals)
@@ -213,6 +262,9 @@ def load_aggregate_data(processed_dir='../data/processed'):
 
     # Filter out rows with NaN labels in either SBP or DBP
     valid_indices = ~(np.isnan(sbp_labels_agg) | np.isnan(dbp_labels_agg))
+    n_invalid = (~valid_indices).sum()
+    if n_invalid > 0:
+        print(f"   ⚠️  Filtering {n_invalid} samples with NaN labels")
     signals_agg = signals_agg[valid_indices]
     sbp_labels_agg = sbp_labels_agg[valid_indices]
     dbp_labels_agg = dbp_labels_agg[valid_indices]
@@ -228,3 +280,4 @@ def load_aggregate_data(processed_dir='../data/processed'):
     print(f"   - Unique patients: {len(np.unique(patient_ids_agg))}")
 
     return signals_agg, sbp_labels_agg, dbp_labels_agg, demographics_agg, patient_ids_agg
+

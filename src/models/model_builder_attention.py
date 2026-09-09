@@ -49,29 +49,33 @@ except ImportError:
 
 class WeightedHuberLoss(Loss):
     """
-    Huber loss with BP-dependent sample weighting built-in.
+    Huber loss with mild BP-dependent sample weighting.
     
-    This addresses data imbalance where normal BP dominates training samples.
-    Weights are applied based on BP value to emphasize extreme values:
-    - Very Low BP (<75): 5x weight
-    - Low BP (75-90): 3x weight  
-    - High BP (>140): 3x weight
+    Weights are intentionally mild to avoid compounding with data augmentation
+    and loss_weights in model.compile(). The total effective weight is:
+      augmentation (2x) × WeightedHuberLoss (1.5x) × SBP_LOSS_WEIGHT (1.0x) = 3x
+    Previously this was 2x × 3x × 2x = 12x, causing severe SBP over-prediction bias.
+    
+    - Very Low BP (<75): 2x weight
+    - Low BP (75-90): 1.5x weight
+    - High BP (>140): 1.5x weight
     - Normal BP (90-140): 1x weight
     """
     
-    def __init__(self, delta=1.0, name='weighted_huber_loss'):
+    def __init__(self, delta=1.0, name='weighted_huber_loss', **kwargs):
         """
         Args:
             delta: Huber loss delta parameter (threshold for quadratic vs linear)
             name: Loss function name
+            **kwargs: Additional Loss arguments (reduction, etc. for Keras 3 serialization)
         """
-        super().__init__(name=name)
+        super().__init__(name=name, **kwargs)
         self.delta = delta
         self.huber = Huber(delta=delta, reduction='none')  # Disable automatic reduction
     
     def call(self, y_true, y_pred):
         """
-        Compute weighted Huber loss with BP-dependent sample weighting.
+        Compute weighted Huber loss with mild BP-dependent sample weighting.
         
         Args:
             y_true: True BP values, shape (batch_size, 1) or (batch_size,)
@@ -87,25 +91,26 @@ class WeightedHuberLoss(Loss):
         # Compute base Huber loss per sample (no reduction)
         huber_loss = self.huber(y_true_flat, y_pred_flat)
         
-        # Calculate sample weights based on BP value
-        # Very Low BP (<75): 5x weight
+        # Mild sample weights — intentionally conservative to avoid compounding with
+        # data augmentation and model compile loss_weights.
+        # Very Low BP (<75): 2x weight
         very_low_weight = tf.where(
             y_true_flat < 75.0,
-            tf.constant(5.0),
+            tf.constant(2.0),
             tf.constant(0.0)
         )
         
-        # Low BP (75-90): 3x weight
+        # Low BP (75-90): 1.5x weight
         low_weight = tf.where(
             tf.logical_and(y_true_flat >= 75.0, y_true_flat < 90.0),
-            tf.constant(3.0),
+            tf.constant(1.5),
             tf.constant(0.0)
         )
         
-        # High BP (>140): 3x weight
+        # High BP (>140): 1.5x weight
         high_weight = tf.where(
             y_true_flat > 140.0,
-            tf.constant(3.0),
+            tf.constant(1.5),
             tf.constant(0.0)
         )
         

@@ -60,8 +60,11 @@ DROPOUT_RATE = 0.2
 L2_REG = 1e-4  # Moderate regularization: prevents overfitting without crushing gradients
 
 # Weighted loss configuration
-SBP_LOSS_WEIGHT = 2.0  # SBP weighted 3x more than DBP (increased for better focus)
-EXTREME_BP_WEIGHT = 3.0  # High/Low BP weighted 5x more than normal BP (increased)
+SBP_LOSS_WEIGHT = 1.0  # Equal weighting: prevents double-penalty with WeightedHuberLoss + augmentation
+EXTREME_BP_WEIGHT = 1.5  # Mild emphasis on extreme BP samples
+
+# Data loading configuration
+MAX_PATIENTS = 500  # Max patients to load (memory-safe for Kaggle T4x2 ~13GB RAM)
 
 # Checkpoint resumption configuration  
 RESUME_LR_REDUCTION_FACTOR = 0.5  # Reduce LR by 50% when resuming
@@ -78,36 +81,42 @@ if IS_KAGGLE:
     KAGGLE_INPUT_DIR = '/kaggle/input'
     BASE_DATA_DIR = '/kaggle/working'
     
-    # Locate dataset path under /kaggle/input
+    # Recursively locate the actual PulseDB directory containing MIMICIII-* subfolders
     pulsedb_path = None
     if os.path.exists(KAGGLE_INPUT_DIR):
         try:
-            for name in os.listdir(KAGGLE_INPUT_DIR):
-                full_path = os.path.join(KAGGLE_INPUT_DIR, name)
-                if os.path.isdir(full_path) and ('pulsedb' in name.lower() or 'mimic' in name.lower()):
-                    pulsedb_path = full_path
+            for root, dirs, files in os.walk(KAGGLE_INPUT_DIR):
+                # Look for a directory that contains MIMICIII-* subdirectories
+                mimic_subdirs = [d for d in dirs if d.upper().startswith('MIMICIII')]
+                if mimic_subdirs:
+                    pulsedb_path = root
+                    print(f"📂 Found PulseDB root with {len(mimic_subdirs)} MIMICIII subdirectories: {root}")
+                    break
+                # Also match by name if we find mimiciii-pulsedb directly
+                if 'pulsedb' in os.path.basename(root).lower():
+                    pulsedb_path = root
                     break
         except Exception as e:
             print(f"⚠️ Error scanning /kaggle/input: {e}")
             
     if pulsedb_path is None:
-        # Fallback if no matching name found: use first directory under /kaggle/input
-        try:
-            subdirs = [os.path.join(KAGGLE_INPUT_DIR, d) for d in os.listdir(KAGGLE_INPUT_DIR) if os.path.isdir(os.path.join(KAGGLE_INPUT_DIR, d))]
-            if subdirs:
-                pulsedb_path = subdirs[0]
-        except Exception:
-            pass
+        # Fallback: try known Kaggle dataset path
+        known_path = os.path.join(KAGGLE_INPUT_DIR, 'datasets', 'yesellee', 'mimiciii-pulsedb')
+        if os.path.exists(known_path):
+            pulsedb_path = known_path
+        else:
+            # Last resort: use first directory under /kaggle/input
+            try:
+                subdirs = [os.path.join(KAGGLE_INPUT_DIR, d) for d in os.listdir(KAGGLE_INPUT_DIR) if os.path.isdir(os.path.join(KAGGLE_INPUT_DIR, d))]
+                if subdirs:
+                    pulsedb_path = subdirs[0]
+            except Exception:
+                pass
             
     if pulsedb_path:
-        print(f"📂 Found PulseDB dataset path: {pulsedb_path}")
+        print(f"📂 PulseDB dataset path: {pulsedb_path}")
         RAW_DATA_DIR = pulsedb_path
-        if os.path.exists(os.path.join(pulsedb_path, 'processed')):
-            PROCESSED_DATA_DIR = os.path.join(pulsedb_path, 'processed')
-        elif os.path.exists(os.path.join(pulsedb_path, 'raw')):
-            PROCESSED_DATA_DIR = os.path.join(pulsedb_path, 'raw')
-        else:
-            PROCESSED_DATA_DIR = pulsedb_path
+        PROCESSED_DATA_DIR = pulsedb_path
     else:
         print("⚠️ PulseDB dataset folder not found under /kaggle/input. Using default fallback.")
         RAW_DATA_DIR = '/kaggle/input/mimiciii-pulsedb'
