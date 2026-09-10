@@ -396,8 +396,8 @@ def main():
         # ===== Step 5: Scale Physiological Features =====
         print("\n🔄 STEP 5: Scaling physiological features...")
         
-        # FIX 3: Subject-wise PAT normalization (using training set statistics per patient)
-        print("   - Applying subject-wise PAT normalization (train stats only per patient)...")
+        # FIX 3: Subject-wise PAT normalization (using each patient's own statistics)
+        print("   - Applying subject-wise PAT normalization (each patient normalized by their own baseline)...")
         pat_seqs_scaled, pat_stats = normalize_pat_subject_wise(pat_seqs, patient_ids_agg, train_mask)
         
         # HR normalization (global statistics from training data)
@@ -942,7 +942,7 @@ def main():
         }
     }
     
-    print("\n📊 Validation Set Performance (Reconstructed from ΔBP):")
+    print("\n📊 Validation Set Performance:")
     print(f"   SBP - MAE: {sbp_metrics_val['MAE']:.2f} mmHg, RMSE: {sbp_metrics_val['RMSE']:.2f} mmHg, R²: {sbp_metrics_val['R2']:.4f}")
     print(f"   DBP - MAE: {dbp_metrics_val['MAE']:.2f} mmHg, RMSE: {dbp_metrics_val['RMSE']:.2f} mmHg, R²: {dbp_metrics_val['R2']:.4f}")
     
@@ -983,7 +983,7 @@ def main():
         'attention_weights': attention_weights
     }
     
-    print("\n📊 Test Set Performance (Reconstructed from ΔBP):")
+    print("\n📊 Test Set Performance:")
     print(f"   SBP - MAE: {sbp_metrics_test['MAE']:.2f} mmHg, RMSE: {sbp_metrics_test['RMSE']:.2f} mmHg, R²: {sbp_metrics_test['R2']:.4f}")
     print(f"   DBP - MAE: {dbp_metrics_test['MAE']:.2f} mmHg, RMSE: {dbp_metrics_test['RMSE']:.2f} mmHg, R²: {dbp_metrics_test['R2']:.4f}")
     

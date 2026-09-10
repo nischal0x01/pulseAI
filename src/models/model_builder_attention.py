@@ -139,9 +139,8 @@ def create_pat_attention_layer(pat_channel, cnn_features, name_prefix="pat_atten
     """
     Create sigmoid-based attention gates from PAT channel to reweight CNN features.
     
-    Unlike softmax attention that normalizes to sum to 1, sigmoid gating allows
-    multiple cardiac cycles to contribute simultaneously with independent weights in [0,1].
-    This is physiologically appropriate since multiple heartbeats can be significant.
+    Uses Conv1D instead of Dense to capture local temporal variations in PAT, 
+    preventing the attention weights from being flat constants.
     
     Args:
         pat_channel: PAT time series (batch, timesteps, 1)
@@ -151,14 +150,14 @@ def create_pat_attention_layer(pat_channel, cnn_features, name_prefix="pat_atten
     Returns:
         Attended features (batch, timesteps, filters), attention_weights (batch, timesteps, 1)
     """
-    # Extract PAT attention weights using sigmoid gating
-    # PAT represents cardiovascular timing - use it to weight temporal importance
-    attention = Dense(ATTENTION_UNITS, activation='relu', 
-                     kernel_regularizer=l2(L2_REG),
-                     name=f'{name_prefix}_dense1')(pat_channel)
-    attention = Dense(1, activation='linear', 
-                     kernel_regularizer=l2(L2_REG),
-                     name=f'{name_prefix}_dense2')(attention)
+    # Extract PAT attention weights using temporal convolutions
+    # PAT represents cardiovascular timing - use its local variations to weight temporal importance
+    attention = Conv1D(ATTENTION_UNITS, kernel_size=5, padding='same', activation='relu', 
+                       kernel_regularizer=l2(L2_REG),
+                       name=f'{name_prefix}_conv1')(pat_channel)
+    attention = Conv1D(1, kernel_size=5, padding='same', activation='linear', 
+                       kernel_regularizer=l2(L2_REG),
+                       name=f'{name_prefix}_conv2')(attention)
     
     # Apply sigmoid to get independent attention gates in [0, 1]
     # Unlike softmax, these do NOT sum to 1, allowing multiple cardiac cycles to contribute
@@ -255,8 +254,15 @@ def create_phys_informed_cnn_lstm_attention(input_shape, return_attention=False,
     
     # Dual outputs: Systolic Blood Pressure (SBP) and Diastolic Blood Pressure (DBP)
     # No regularization on output layers to allow full expressiveness
-    sbp_output = Dense(1, activation='linear', name='sbp_output')(dense)
-    dbp_output = Dense(1, activation='linear', name='dbp_output')(dense)
+    # Initialize biases to population means (120/70) to speed up convergence
+    # since targets are absolute BP values and not standardized.
+    import tensorflow.keras.initializers as initializers
+    sbp_output = Dense(1, activation='linear', 
+                       bias_initializer=initializers.Constant(120.0),
+                       name='sbp_output')(dense)
+    dbp_output = Dense(1, activation='linear', 
+                       bias_initializer=initializers.Constant(70.0),
+                       name='dbp_output')(dense)
     
     # Create model
     if return_attention:
@@ -355,8 +361,14 @@ def create_simple_cnn_gru_model(input_shape):
     dense = Dropout(DROPOUT_RATE, name='dropout_5')(dense)
     
     # Dual outputs: SBP and DBP
-    sbp_output = Dense(1, activation='linear', name='sbp_output')(dense)
-    dbp_output = Dense(1, activation='linear', name='dbp_output')(dense)
+    # Initialize biases to population means (120/70)
+    import tensorflow.keras.initializers as initializers
+    sbp_output = Dense(1, activation='linear', 
+                       bias_initializer=initializers.Constant(120.0),
+                       name='sbp_output')(dense)
+    dbp_output = Dense(1, activation='linear', 
+                       bias_initializer=initializers.Constant(70.0),
+                       name='dbp_output')(dense)
     
     model = Model(inputs=inputs, outputs=[sbp_output, dbp_output], name='Simple_CNN_GRU_Dual')
     

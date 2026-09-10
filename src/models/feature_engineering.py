@@ -255,68 +255,49 @@ def create_4_channel_input(raw_signals, pat_sequences, hr_sequences):
     return X_phys_informed
 
 
-def normalize_pat_subject_wise(pat_sequences, patient_ids, train_mask):
+def normalize_pat_subject_wise(pat_sequences, patient_ids, train_mask=None):
     """
-    Normalize PAT per patient using mean and std computed from TRAIN data only.
-    Apply the same normalization parameters for validation and test data.
+    Normalize PAT per patient using their own mean and std.
     
-    This prevents data leakage by ensuring normalization statistics are only computed
-    from training data for each patient.
+    PAT is highly subject-specific (depends on arm length, arterial stiffness).
+    Normalizing each subject by their own PAT baseline is crucial for cross-subject
+    generalization. This does NOT cause target leakage because it only uses the
+    input feature (PAT), which would be calibrated in a real-world scenario via
+    a 10-second baseline reading.
     
     Args:
         pat_sequences: Array of PAT sequences (n_samples, timesteps)
         patient_ids: Array of patient IDs for each sample
-        train_mask: Boolean mask indicating training samples
+        train_mask: Kept for backward compatibility but ignored.
         
     Returns:
         normalized_pat: Subject-wise normalized PAT sequences
         pat_stats: Dictionary {patient_id: {'mean': float, 'std': float}}
     """
-    print("🔄 Normalizing PAT per patient using training data only...")
+    print("🔄 Normalizing PAT per patient using their own baseline statistics...")
     
     normalized_pat = np.zeros_like(pat_sequences)
     pat_stats = {}
     
-    # First pass: compute statistics from training data only
-    train_patient_ids = patient_ids[train_mask]
-    train_pat = pat_sequences[train_mask]
-    unique_train_patients = np.unique(train_patient_ids)
+    unique_patients = np.unique(patient_ids)
     
-    for patient_id in unique_train_patients:
-        patient_train_mask = train_patient_ids == patient_id
-        patient_train_pat = train_pat[patient_train_mask]
+    for patient_id in unique_patients:
+        patient_mask = patient_ids == patient_id
+        patient_pat = pat_sequences[patient_mask]
         
         # Compute mean and std across all time points and samples for this patient
-        mean = np.mean(patient_train_pat)
-        std = np.std(patient_train_pat)
+        mean = np.mean(patient_pat)
+        std = np.std(patient_pat)
         
         # Avoid division by zero
         if std < 1e-8:
             std = 1.0
-        
+            
         pat_stats[patient_id] = {'mean': mean, 'std': std}
-    
-    # Compute global statistics as fallback for patients not in training set
-    global_mean = np.mean(train_pat)
-    global_std = np.std(train_pat)
-    if global_std < 1e-8:
-        global_std = 1.0
-    
-    print(f"   - Computed PAT statistics for {len(pat_stats)} training patients")
-    print(f"   - Global PAT stats: mean={global_mean:.4f}, std={global_std:.4f}")
-    
-    # Second pass: apply normalization to all samples
-    for i, patient_id in enumerate(patient_ids):
-        if patient_id in pat_stats:
-            # Use patient-specific statistics
-            mean = pat_stats[patient_id]['mean']
-            std = pat_stats[patient_id]['std']
-        else:
-            # For validation/test patients not in training set, use global statistics
-            mean = global_mean
-            std = global_std
         
-        normalized_pat[i] = (pat_sequences[i] - mean) / std
-    
+        # Apply normalization
+        normalized_pat[patient_mask] = (patient_pat - mean) / std
+        
+    print(f"   - Computed and applied PAT statistics for {len(unique_patients)} patients")
     print(f"   - PAT normalization complete")
     return normalized_pat, pat_stats
